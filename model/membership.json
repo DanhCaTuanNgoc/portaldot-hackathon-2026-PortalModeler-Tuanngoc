@@ -1,0 +1,28 @@
+{
+  "contract": "Membership",
+  "actors": ["User", "Admin"],
+  "states": [
+    {
+      "name": "is_member",
+      "type": "Mapping<AccountId,bool>"
+    },
+    {
+      "name": "joined_at",
+      "type": "Mapping<AccountId,Timestamp>"
+    }
+  ],
+  "actions": [
+    {
+      "name": "join",
+      "actor": "User",
+      "requires": "pay POT",
+      "emits": "MemberJoined"
+    }
+  ],
+  "events": [
+    {
+      "name": "MemberJoined",
+      "fields": ["account", "joined_at", "paid"]
+    }
+  ]
+}

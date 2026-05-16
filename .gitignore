@@ -1,0 +1,16 @@
+.venv/
+target/
+front-end/node_modules/
+front-end/dist/
+.cargo-install-target/
+.cargo-temp/
+.local-node/
+*.contract
+*.wasm
+*.json
+!model/membership.json
+!scripts/*.json
+!.gitignore
+__pycache__/
+.env
+contract-address.txt
