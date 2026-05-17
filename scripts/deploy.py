@@ -85,13 +85,19 @@ def constructor_args(metadata: dict[str, Any], constructor_name: str, fee: int) 
     raise ValueError(f'Constructor "{constructor_name}" not found')
 
 
+def call_field_names(call_function: Any) -> list[str]:
+    call_value = call_function.value
+    fields = call_value.get("args") or call_value.get("fields") or []
+    return [field["name"] for field in fields]
+
+
 def preflight_runtime_compatibility(
     portaldot: Any,
     metadata: dict[str, Any],
     legacy_no_selector: bool,
 ) -> None:
     call_function = portaldot.get_metadata_call_function("Contracts", "instantiate_with_code")
-    call_arg_names = [arg["name"] for arg in call_function.value["args"]]
+    call_arg_names = call_field_names(call_function)
     supports_modern_instantiate = "endowment" in call_arg_names
     artifact_version = metadata_version(metadata)
     artifact_ink_version = ink_language_version(metadata)
@@ -261,7 +267,7 @@ def main() -> None:
     )
     preflight_runtime_compatibility(portaldot, code.metadata.metadata_dict, args.legacy_no_selector)
     call_function = portaldot.get_metadata_call_function("Contracts", "instantiate_with_code")
-    call_arg_names = {arg["name"] for arg in call_function.value["args"]}
+    call_arg_names = set(call_field_names(call_function))
     uses_weight_v2 = "endowment" not in call_arg_names
     allow_legacy_fallback = args.legacy_no_selector or (not uses_weight_v2 and metadata_version(code.metadata.metadata_dict) < 5)
     payload_variants = constructor_payload_variants(constructor_data, allow_legacy_fallback)

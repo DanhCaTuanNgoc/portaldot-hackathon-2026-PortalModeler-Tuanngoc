@@ -96,6 +96,12 @@ def ink_language_version(metadata: dict[str, object]) -> int:
     return 0
 
 
+def call_field_names(call_function: object) -> list[str]:
+    call_value = call_function.value
+    fields = call_value.get("args") or call_value.get("fields") or []
+    return [field["name"] for field in fields]
+
+
 def check_runtime_compatibility(url: str, timeout: float) -> bool:
     metadata_files = artifact_matches(".json")
     if not metadata_files:
@@ -117,7 +123,7 @@ def check_runtime_compatibility(url: str, timeout: float) -> bool:
     try:
         portaldot = connect(url, DEFAULT_SS58, DEFAULT_TYPE_REGISTRY_PRESET)
         call_function = portaldot.get_metadata_call_function("Contracts", "instantiate_with_code")
-        call_arg_names = [arg["name"] for arg in call_function.value["args"]]
+        call_arg_names = call_field_names(call_function)
         supports_modern_instantiate = "endowment" in call_arg_names
     except Exception as exc:  # noqa: BLE001
         return status(False, "Runtime compatibility", f"could not inspect Contracts metadata ({exc})")
