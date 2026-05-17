@@ -4,9 +4,10 @@ import argparse
 from pathlib import Path
 from typing import Any
 
+from scalecodec import ScaleBytes
 from substrateinterface.contracts import ContractCode
 
-from common import add_common_args, connect, find_artifact, keypair_from_seed
+from common import add_common_args, connect, find_artifact, keypair_from_seed, metadata_for_substrate_interface, run_cli
 
 
 FALLBACK_GAS_REF_TIME = 500_000_000_000
@@ -35,6 +36,29 @@ def make_fallback_gas(args: argparse.Namespace, weight_v2: bool) -> int | dict[s
     if weight_v2:
         return {"ref_time": args.gas_ref_time, "proof_size": args.gas_proof_size}
     return args.gas_ref_time
+
+
+def strip_constructor_selector(constructor_data: ScaleBytes) -> ScaleBytes:
+    data = constructor_data.to_hex()
+    if len(data) <= 10:
+        return ScaleBytes("0x")
+    return ScaleBytes(f"0x{data[10:]}")
+
+
+def constructor_args(metadata: dict[str, Any], constructor_name: str, fee: int) -> dict[str, Any]:
+    for constructor in metadata["spec"]["constructors"]:
+        if constructor["label"] != constructor_name:
+            continue
+
+        args: dict[str, Any] = {}
+        for arg in constructor["args"]:
+            if arg["label"] == "join_fee":
+                args["join_fee"] = fee
+            else:
+                raise ValueError(f"Unsupported constructor argument: {arg['label']}")
+        return args
+
+    raise ValueError(f'Constructor "{constructor_name}" not found')
 
 
 def dry_run_instantiate(
@@ -151,21 +175,30 @@ def main() -> None:
     keypair = keypair_from_seed(args.seed, args.ss58)
     metadata = find_artifact(args.metadata, ".json")
     wasm = find_artifact(args.wasm, ".wasm")
+    contract_metadata = metadata_for_substrate_interface(metadata, wasm)
 
     print(f"Deploying from {keypair.ss58_address}")
     print(f"Metadata: {metadata}")
+    if contract_metadata != metadata:
+        print(f"Substrate-interface metadata adapter: {contract_metadata}")
     print(f"WASM: {wasm}")
 
     code = ContractCode.create_from_contract_files(
         wasm_file=str(wasm),
-        metadata_file=str(metadata),
+        metadata_file=str(contract_metadata),
         substrate=portaldot,
     )
 
-    constructor_data = code.metadata.generate_constructor_data(name="new", args={"join_fee": args.fee})
+    constructor_data = code.metadata.generate_constructor_data(
+        name="new",
+        args=constructor_args(code.metadata.metadata_dict, "new", args.fee),
+    )
     call_function = portaldot.get_metadata_call_function("Contracts", "instantiate_with_code")
     call_arg_names = {arg["name"] for arg in call_function.value["args"]}
     uses_weight_v2 = "endowment" not in call_arg_names
+    if not uses_weight_v2:
+        constructor_data = strip_constructor_selector(constructor_data)
+        print("Legacy Contracts.instantiate_with_code detected; using constructor args without selector.")
     gas_limit = make_fallback_gas(args, uses_weight_v2)
 
     if not args.no_dry_run_gas:
@@ -226,4 +259,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_cli(main))

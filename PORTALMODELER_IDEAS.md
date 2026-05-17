@@ -1,219 +1,511 @@
 # PortalModeler Ideas
 
-## Mục tiêu sản phẩm
+## 1. Product Vision
 
-PortalModeler là lớp mô hình hoá và trực quan hoá cho Portaldot, giúp dev đi từ ý tưởng tới tương tác với local chain mà không cần viết nhiều code phức tạp.
+PortalModeler is a visual node-board for designing, running, and explaining Portaldot contract workflows.
 
-Thay vì bắt đầu bằng Rust, ink!, CLI và dry-run gas ngay từ đầu, người dùng sẽ:
+Instead of starting from terminal commands, Rust/ink!, contract metadata, gas flags, account seeds, and scattered scripts, developers start from a visual flow:
 
-- Kéo thả action node để mô hình hoá luồng nghiệp vụ.
-- Xem dữ liệu chain, state, event và balance theo dạng trực quan.
-- Sinh ra command, checklist, contract skeleton và flow tương tác từ mô hình.
+```txt
+Chain Connect -> Account Select -> Balance Query -> Deploy Contract -> Call Action -> Read State -> Event Viewer
+```
 
-## Pain points cần giải quyết
+The key product idea is:
 
-- Dev mới vào hệ Portaldot bị ngợp vì phải hiểu chain, account, SS58, gas, contract metadata, wasm, event và runtime API cùng lúc.
-- Luồng query/deploy/call bị chia rời giữa nhiều script và tài liệu.
-- Người mới không biết nên bắt đầu từ state nào, action nào, hay dữ liệu nào là đầu vào/đầu ra.
-- Việc đọc dữ liệu chain hiện tại còn thiên về terminal output, thiếu lớp trực quan hoá.
-- Các tham số như `--value`, gas fallback, address, metadata, wasm dễ gây lỗi khi nhập tay.
-- Local node setup có nhiều bước, trong khi dev chỉ muốn test nhanh một flow nhỏ.
+> Drag nodes, connect a workflow, inspect generated commands, run steps against a local Portaldot node, and understand what happened on-chain.
 
-## Ý tưởng lõi
+PortalModeler should feel like a model-driven dev console: visual first, command-aware, local-chain friendly, and beginner-safe.
 
-### 1. Action Graph Builder
+## 2. Core Positioning
 
-Một canvas kiểu kéo-thả để xây dựng flow portaldot.
+PortalModeler is not only a dashboard and not only a command generator.
 
-Mỗi node đại diện cho một khối logic:
+The main product identity should be:
 
-- `Query Node`: đọc chain, account, state, balance.
-- `Deploy Node`: deploy contract, chọn metadata/wasm, cấu hình fee và gas.
-- `Call Node`: gọi action như `join`, `is_member`, `joined_at`.
-- `Input Node`: nhập address, amount, seed, file artifact.
-- `Event Node`: nhận và hiển thị event như `MemberJoined`.
-- `Condition Node`: kiểm tra balance đủ, contract tồn tại, state hợp lệ.
-- `Transform Node`: map dữ liệu từ chain thành payload cho node tiếp theo.
+> A drag-and-drop workflow modeler for Portaldot developers.
 
-Người dùng nối node với nhau để mô tả quy trình thay vì viết script thủ công.
+The node board is the center of the product. Everything else supports the board:
 
-### 2. Data Visualizer
+- Command generator proves the graph has executable meaning.
+- Local node feedback proves the flow can interact with a real chain.
+- State and event visualization proves the user can understand the result.
+- Beginner defaults reduce setup friction.
+- Export turns a visual flow into shareable documentation.
 
-Một lớp hiển thị dữ liệu chain theo dạng dễ hiểu.
+## 3. Target Users
 
-Nên có các view:
+### New Portaldot Developers
 
-- Account view: address, balance, nonce, token symbol, decimals.
-- Contract view: address, metadata, wasm hash, constructor, messages.
-- State view: `is_member`, `joined_at`, mapping account -> value.
-- Event timeline: sequence of events theo thời gian hoặc theo extrinsic.
-- Gas view: dry-run estimate, fallback gas, actual gas used.
+They want to understand how account, balance, contract deployment, call actions, state, event, gas, metadata, and wasm artifacts fit together.
 
-Mục tiêu là dev nhìn vào là hiểu ngay “đang có gì trên chain”, thay vì đọc JSON raw.
+They need:
 
-### 3. Guided Beginner Mode
+- Safe local defaults.
+- Guided flow.
+- Clear command preview.
+- Error hints.
+- Visual state and event feedback.
 
-Chế độ dành cho người mới bắt đầu.
+### Hackathon Builders
 
-Tính năng:
+They want to prototype fast, show a working contract flow, and explain what happens on-chain without spending the demo inside terminal output.
 
-- Chỉ hiện các node cơ bản trước, ẩn bớt advanced setting.
-- Có wizard từng bước: chọn node -> chọn nguồn data -> test -> generate.
-- Tự gợi ý values mặc định cho local dev như `//Alice`, `ws://127.0.0.1:9944`, `SS58 42`.
-- Cảnh báo rõ khi người dùng đang ở local dev mode và không phải mainnet.
-- Tự sinh checklist “bước tiếp theo nên làm gì”.
+They need:
 
-### 4. Auto Command Generator
+- A fast local workflow.
+- Reusable node templates.
+- Exportable command sheet/checklist.
+- A visual demo surface.
 
-Từ canvas, sinh ra:
+### Experienced Devs
 
-- Python command để query/deploy/call.
-- Terminal log preview.
-- Checklist chạy local node.
-- Contract/action skeleton.
-- Mapping giữa node flow và action model JSON.
+They may not need beginner guidance, but they can still use PortalModeler to document, reproduce, and share contract workflows.
 
-Ví dụ:
+They need:
 
-- `Query Node` + `Account Input` -> `python scripts/query.py --account ...`
-- `Deploy Node` + `Value Input` -> `python scripts/deploy.py --fee ...`
-- `Call Node` + `Join Action` -> `python scripts/call.py --action join --value ...`
+- Custom node config.
+- Multi-step execution.
+- Flow JSON export/import.
+- Reliable command generation.
 
-### 5. Live Local Node Feedback
+## 4. Pain Points
 
-Kết nối trực tiếp với local node để xem log và trạng thái thật.
+- New developers must understand chain connection, account seeds, SS58, token decimals, gas, metadata, wasm, events, contract addresses, and runtime APIs too early.
+- Query, deploy, call, and read-state flows are split across scripts, docs, and terminal output.
+- Manual values like `--value`, gas fallback, address, metadata path, and wasm path are easy to enter incorrectly.
+- Local node setup has many steps before the user sees a meaningful result.
+- Terminal output is hard to explain in a hackathon demo.
+- There is no visual representation of the relationship between account, contract, action, state, and event.
 
-Hiển thị:
+## 5. Product Principle
 
-- Node status: starting, syncing, listening, failed.
-- RPC endpoint status.
-- Latest block / highest known block.
-- Balance refresh sau khi top up từ ALICE.
-- Deploy success / failure và reason.
+PortalModeler should make each node answer three questions:
 
-## Fitur đề xuất theo user journey
+1. What input does this node need?
+2. What output does this node produce?
+3. What command or chain operation does this node represent?
 
-### A. Start Here
+Every node should have:
 
-Màn hình đầu tiên nên hỏi:
+- A visible role on the board.
+- A config panel.
+- A generated command preview when relevant.
+- A run status.
+- A clear success or error result.
 
-- Bạn muốn làm gì?
-- Query chain
-- Deploy contract
-- Call action
-- Xem state / event
-- Học flow Portaldot bằng kéo thả
+## 6. Node Board as the Main Feature
 
-### B. Build Flow
+The node board should be the first screen.
 
-Canvas trung tâm với palette node bên trái.
+The user should be able to:
 
-Người dùng có thể:
-
-- Kéo node từ palette ra canvas.
-- Nối output của node này vào input của node khác.
-- Click node để chỉnh tham số.
-- Xem preview command ngay dưới node.
-- Run flow từng bước hoặc chạy toàn bộ.
-
-### C. Inspect Result
-
-Sau khi chạy flow, panel kết quả hiển thị:
-
-- Raw output từ script.
-- Dữ liệu được decode.
-- Event timeline.
-- Diff trước/sau khi tương tác.
-- Error hint nếu thiếu artifact, thiếu balance, sai address, hoặc node chưa chạy.
-
-### D. Export / Share
-
-Dev có thể export flow thành:
-
-- JSON model.
-- Markdown checklist.
-- Python command sheet.
-- Screenshot diagram cho docs hoặc PR.
-
-## Các node nên có trước tiên
-
-### Node cơ bản
-
-- Chain Connect
-- Account Select
-- Balance Query
-- Artifact Select
-- Deploy Contract
-- Read Contract
-- Call Contract
-- Event Viewer
-- State Viewer
-
-### Node hỗ trợ người mới
-
-- Local Faucet Hint
-- Alice Top-up Helper
-- Gas Estimator
-- Error Explainer
-- Setup Checklist
-
-### Node nâng cao sau này
-
-- Branch / condition
-- Loop over accounts
-- Batch call
-- Compare state snapshots
-- Export to generated docs
-
-## UI/UX principles
-
-- Mỗi node phải trả lời được 3 câu: input gì, output gì, lỗi thường gặp gì.
-- Mọi thao tác quan trọng phải có preview trước khi chạy.
-- Không bắt người mới nhập code khi chưa cần thiết.
-- Ưu tiên kéo thả, select box, auto-fill, và command preview.
-- Các state quan trọng phải được biểu diễn trực quan bằng timeline, badge, hoặc card.
-
-## How this solves pain points
-
-- Mô hình hoá: biến contract/action flow thành graph thay vì script rời rạc.
-- Trực quan hoá dữ liệu: state, balance, event, gas được hiển thị bằng card và timeline.
-- Thao tác đơn giản: người mới chỉ cần kéo node, chọn giá trị, bấm run.
-- Giảm lỗi nhập tay: command, address, fee, gas được sinh tự động hoặc gợi ý.
-- Học nhanh hơn: người mới thấy ngay mối quan hệ giữa chain, contract, account và event.
-
-## MVP đề xuất
-
-MVP nên có:
-
-- Canvas kéo-thả 5 node: Query, Deploy, Call, State, Event.
-- Panel xem log thật từ local node.
-- Panel xem dữ liệu account và contract.
-- Generator xuất ra checklist và command.
-- Beginner mode với cấu hình local mặc định.
-
-## Roadmap ngắn
-
-### Phase 1
-
-- Canvas cơ bản.
-- Live logs.
-- Query/deploy/call flow.
-- Export markdown.
-
-### Phase 2
-
-- State visualizer.
-- Event timeline.
-- Gas estimator.
-- Node templates cho local dev.
-
-### Phase 3
-
-- Multi-flow workspace.
-- Shareable models.
-- Auto-generated docs và onboarding.
-- Advanced branching and batch actions.
-
-## Kết luận
-
-PortalModeler nên được định vị như một lớp mô hình hoá thao tác Portaldot dành cho dev mới và dev muốn prototype nhanh: ít code, nhiều trực quan, có thể kéo thả, và luôn nhìn thấy dữ liệu chain thật.
+- Drag nodes from a palette.
+- Move nodes around the board.
+- Connect compatible node handles.
+- Click a node to edit configuration.
+- See generated commands from the graph.
+- Run one node or run the whole flow.
+- Inspect logs, state, and events.
+- Export the graph as JSON or Markdown.
+
+The board should not be decorative. It must produce executable or exportable artifacts.
+
+## 7. Recommended Node Set
+
+### Phase 1 Demo Nodes
+
+These nodes are enough to make the product feel like a real visual modeler while staying feasible.
+
+| Node | Purpose | Example Output |
+| --- | --- | --- |
+| Chain Connect | Select RPC endpoint and network mode | `ws://127.0.0.1:9944` |
+| Account Select | Select signer or dev seed | `//Alice` |
+| Balance Query | Read account balance | `python scripts/query.py` |
+| Artifact Select | Select metadata and wasm artifact | `contract/target/ink/*.json`, `*.wasm` |
+| Deploy Membership | Deploy Membership contract | `python scripts/deploy.py --fee ...` |
+| Join Membership | Call `join()` with value | `python scripts/call.py --action join --value ...` |
+| Check Is Member | Read `is_member` state | `python scripts/call.py --action is_member` |
+| Read Joined At | Read `joined_at` state | `python scripts/call.py --action joined_at` |
+| Event Viewer | Show expected or decoded contract event | `MemberJoined` |
+| Command Export | Export command sheet/checklist | Markdown or JSON |
+
+### Phase 2 Nodes
+
+| Node | Purpose |
+| --- | --- |
+| Gas Estimator | Dry-run gas and fallback gas config |
+| State Viewer | Visual state cards and before/after diff |
+| Error Explainer | Convert common script errors into user-friendly hints |
+| Local Faucet Hint | Explain how to top up with local Alice |
+| Condition Node | Check if balance, contract address, or artifact exists |
+| Contract Address Store | Read/write `contract-address.txt` |
+
+### Phase 3 Nodes
+
+| Node | Purpose |
+| --- | --- |
+| Branch Node | Conditional workflow path |
+| Batch Call Node | Run multiple calls |
+| Loop Accounts Node | Run flow across accounts |
+| Compare Snapshot Node | Compare state before and after actions |
+| Multi-contract Node | Model interactions between contracts |
+| Docs Generator Node | Generate docs from the flow |
+
+## 8. MVP Flow
+
+The strongest demo flow should be:
+
+```txt
+Chain Connect
+  -> Account Select
+  -> Balance Query
+  -> Artifact Select
+  -> Deploy Membership
+  -> Join Membership
+  -> Check Is Member
+  -> Read Joined At
+  -> Event Viewer
+  -> Command Export
+```
+
+This flow proves:
+
+- The board is interactive.
+- Nodes can be connected.
+- The graph has meaning.
+- Commands are generated from the graph.
+- The flow maps to real scripts in the repo.
+- The user can understand contract state and events visually.
+
+## 9. MVP Scope
+
+### Must Have
+
+- Drag-and-drop node board.
+- Node palette.
+- 8-10 predefined node templates.
+- Connectable edges between nodes.
+- Node inspector panel.
+- Generated command preview.
+- Simulated or real run output per node.
+- Export graph JSON.
+- Export Markdown command checklist.
+
+### Should Have
+
+- RPC health check for local node.
+- Balance query using existing `scripts/query.py`.
+- Deploy/call command mapping using existing scripts.
+- Simple event timeline.
+- Beginner defaults:
+  - `ws://127.0.0.1:9944`
+  - `//Alice`
+  - SS58 `42`
+  - token `POT`
+
+### Nice To Have
+
+- Real-time local node log polling.
+- Real contract result parsing.
+- Before/after state diff.
+- Import previously exported flow JSON.
+- Multiple flow tabs.
+
+## 10. Technical Direction
+
+### Frontend
+
+Recommended library:
+
+- `@xyflow/react` for the node board.
+
+Recommended UI layout:
+
+```txt
+┌────────────────────────────────────────────────────────────┐
+│ Header: PortalModeler / network status / run flow          │
+├───────────────┬────────────────────────────┬───────────────┤
+│ Node Palette  │ Visual Node Board          │ Inspector     │
+│               │                            │ Command Panel │
+├───────────────┴────────────────────────────┴───────────────┤
+│ Logs / Events / Export Preview                              │
+└────────────────────────────────────────────────────────────┘
+```
+
+Core frontend state:
+
+```ts
+type PortalNodeKind =
+  | "chainConnect"
+  | "accountSelect"
+  | "balanceQuery"
+  | "artifactSelect"
+  | "deployMembership"
+  | "joinMembership"
+  | "checkIsMember"
+  | "readJoinedAt"
+  | "eventViewer"
+  | "commandExport";
+
+type PortalNodeConfig = {
+  endpoint?: string;
+  seed?: string;
+  account?: string;
+  fee?: string;
+  value?: string;
+  action?: string;
+  metadataPath?: string;
+  wasmPath?: string;
+};
+
+type PortalFlowModel = {
+  nodes: PortalNode[];
+  edges: PortalEdge[];
+};
+```
+
+### Backend / Script Layer
+
+The repo already has a useful base:
+
+- `scripts/query.py`
+- `scripts/deploy.py`
+- `scripts/call.py`
+- `scripts/run_node.py`
+- `model/generate.py`
+- `model/membership.json`
+
+PortalModeler should not replace these scripts at first. It should generate and orchestrate them.
+
+### Flow Engine
+
+Phase 1 does not need a complex graph engine.
+
+Start with:
+
+- Validate allowed edge pairs.
+- Generate command list by topological order or by known demo flow order.
+- Store node config inside the graph.
+- Produce command sheet from node types.
+
+Later:
+
+- Add input/output types.
+- Add validation rules.
+- Add execution dependencies.
+- Add conditional branches.
+
+## 11. Phase Plan
+
+## Phase 0: Stabilize Proof Foundation
+
+Goal: make sure the current repo has reliable scripts and docs.
+
+Tasks:
+
+- Verify `scripts/query.py` can connect to local Portaldot node.
+- Verify contract build path and artifact discovery.
+- Verify deploy script can write `contract-address.txt`.
+- Verify `join`, `is_member`, and `joined_at` commands.
+- Keep `LOCAL_SETUP.md` as the setup source of truth.
+- Fix encoding issues in docs if needed.
+
+Exit criteria:
+
+- A developer can follow setup docs and run query/deploy/call manually.
+- The command flow is known and stable enough to be generated by the UI.
+
+## Phase 1: Visual Node Board MVP
+
+Goal: make drag-and-drop the main product experience.
+
+Tasks:
+
+- Add React Flow / XYFlow board.
+- Create node palette.
+- Implement draggable nodes.
+- Implement connectable edges.
+- Create custom node UI for the 10 MVP nodes.
+- Add inspector panel for selected node.
+- Add command preview panel.
+- Add graph JSON export.
+- Add Markdown checklist export.
+- Seed the board with a default Membership flow.
+
+Exit criteria:
+
+- User can open the app and visually edit the Membership flow.
+- User can drag nodes, connect nodes, configure nodes, and see generated commands.
+- The board is clearly the center of the product.
+
+## Phase 2: Script-Aware Execution
+
+Goal: make the visual flow interact with existing local scripts.
+
+Tasks:
+
+- Add a safe execution layer for query/deploy/call.
+- Connect `Balance Query` to `scripts/query.py`.
+- Connect `Deploy Membership` to `scripts/deploy.py`.
+- Connect action nodes to `scripts/call.py`.
+- Show status per node:
+  - idle
+  - running
+  - success
+  - warning
+  - error
+- Show logs under the board.
+- Add local node health check.
+- Read `contract-address.txt` after deploy.
+
+Exit criteria:
+
+- User can run at least one node from the UI.
+- Ideally, user can run the full Membership flow against a local node.
+- Errors are visible and understandable.
+
+## Phase 3: State and Event Visualization
+
+Goal: make on-chain result easy to understand.
+
+Tasks:
+
+- Add simple account card:
+  - address
+  - balance
+  - token
+  - nonce if available
+- Add contract card:
+  - contract address
+  - metadata path
+  - wasm path
+  - available messages
+- Add state cards:
+  - `is_member`
+  - `joined_at`
+- Add event timeline:
+  - deploy events
+  - call events
+  - `MemberJoined`
+- Add before/after snapshot for action nodes.
+
+Exit criteria:
+
+- User can explain what happened after running `join()`.
+- The UI is more informative than raw terminal output.
+
+## Phase 4: Guided Beginner Mode
+
+Goal: make the tool beginner-safe.
+
+Tasks:
+
+- Add default local profile.
+- Hide advanced fields by default.
+- Add node-level validation.
+- Add warnings for mainnet vs local dev.
+- Add setup checklist node.
+- Add common error hints:
+  - local node not running
+  - missing artifacts
+  - missing balance
+  - missing contract address
+  - wrong RPC endpoint
+  - dry-run gas unavailable
+
+Exit criteria:
+
+- A new user can understand what to do next without reading all scripts first.
+- The UI prevents common mistakes before execution.
+
+## Phase 5: Shareable Modeler
+
+Goal: turn the board into a reusable modeling artifact.
+
+Tasks:
+
+- Add flow import.
+- Add named flows.
+- Add generated docs.
+- Add screenshot/export diagram.
+- Add model-to-node generation from `model/membership.json`.
+- Add node-to-model export.
+- Support custom action templates.
+
+Exit criteria:
+
+- A visual flow can be shared, restored, documented, and reused.
+- PortalModeler becomes more than a one-off demo UI.
+
+## 12. Feasibility Analysis
+
+### What Is Highly Feasible
+
+- Drag-and-drop board with predefined node templates.
+- Command generation from node config.
+- JSON/Markdown export.
+- Simulated run logs.
+- Static event and state visualizer.
+- Beginner defaults.
+
+### What Is Moderately Feasible
+
+- Running Python scripts from the UI.
+- Reading local script output.
+- Parsing contract address after deploy.
+- Showing local node health.
+- Showing real balance query output.
+
+### What Is Risky
+
+- Fully generic contract metadata parsing.
+- Fully generic graph execution engine.
+- Advanced gas estimation across runtime versions.
+- Real event decoding for every possible contract.
+- Branching, loops, and batch execution too early.
+
+## 13. Recommended Hackathon Strategy
+
+The hackathon demo should not try to prove every future feature.
+
+It should prove one strong story:
+
+1. Start from a visual board.
+2. Drag or inspect Membership workflow nodes.
+3. Show that the graph generates real commands.
+4. Run or simulate query/deploy/call.
+5. Show state/event result.
+6. Export the flow as docs or JSON.
+
+The ideal demo line:
+
+> This is not just a dashboard. The visual model is the source of truth, and commands, checklist, logs, and state views are generated from it.
+
+## 14. Success Metrics
+
+### MVP Success
+
+- User understands the contract flow without reading scripts first.
+- User can edit the flow visually.
+- User can generate the correct commands.
+- User can export the flow.
+- Demo audience understands account -> deploy -> call -> state -> event relationship.
+
+### Product Success
+
+- New devs reach first successful local contract call faster.
+- Hackathon teams can present Portaldot workflows visually.
+- Repeated contract flows become reusable templates.
+- The visual graph becomes useful documentation.
+
+## 15. Final Recommendation
+
+Keep the drag-and-drop node board as the main feature.
+
+Do not reduce PortalModeler into a terminal dashboard. The dashboard, command preview, local logs, and state visualizer should all serve the graph.
+
+The best near-term version is:
+
+> A visual Membership workflow builder for Portaldot local development, with draggable nodes, generated commands, runnable steps, and explainable state/event output.
+
+This scope is focused enough to finish, visual enough to stand out, and technical enough to prove real value.

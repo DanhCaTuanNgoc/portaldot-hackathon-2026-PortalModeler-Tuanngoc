@@ -1,6 +1,8 @@
 #[ink::contract]
 mod membership {
-    use ink::storage::Mapping;
+    use ink_storage::Mapping;
+
+    const DEFAULT_JOIN_FEE: Balance = 100_000_000_000_000;
 
     #[ink(storage)]
     pub struct Membership {
@@ -18,9 +20,9 @@ mod membership {
 
     impl Membership {
         #[ink(constructor)]
-        pub fn new(join_fee: Balance) -> Self {
+        pub fn new() -> Self {
             Self {
-                join_fee,
+                join_fee: DEFAULT_JOIN_FEE,
                 members: Mapping::default(),
             }
         }
@@ -62,15 +64,16 @@ mod membership {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use ink::env::test;
+        use ink_env::test;
+        use ink_lang as ink;
 
         #[ink::test]
         fn join_records_membership() {
-            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
-            let mut contract = Membership::new(10);
+            let accounts = test::default_accounts::<ink_env::DefaultEnvironment>();
+            let mut contract = Membership::new();
 
-            test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
-            test::set_value_transferred::<ink::env::DefaultEnvironment>(10);
+            test::set_caller::<ink_env::DefaultEnvironment>(accounts.alice);
+            test::set_value_transferred::<ink_env::DefaultEnvironment>(DEFAULT_JOIN_FEE);
             contract.join();
 
             assert!(contract.is_member(accounts.alice));
@@ -80,11 +83,11 @@ mod membership {
         #[ink::test]
         #[should_panic(expected = "insufficient join fee")]
         fn join_rejects_underpayment() {
-            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
-            let mut contract = Membership::new(10);
+            let accounts = test::default_accounts::<ink_env::DefaultEnvironment>();
+            let mut contract = Membership::new();
 
-            test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
-            test::set_value_transferred::<ink::env::DefaultEnvironment>(9);
+            test::set_caller::<ink_env::DefaultEnvironment>(accounts.alice);
+            test::set_value_transferred::<ink_env::DefaultEnvironment>(DEFAULT_JOIN_FEE - 1);
             contract.join();
         }
     }

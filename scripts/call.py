@@ -5,7 +5,7 @@ from pathlib import Path
 
 from substrateinterface.contracts import ContractInstance
 
-from common import add_common_args, connect, find_artifact, keypair_from_seed, print_json
+from common import add_common_args, connect, find_artifact, keypair_from_seed, metadata_for_substrate_interface, print_json, run_cli
 
 
 def read_address(explicit: str | None) -> str:
@@ -35,6 +35,7 @@ def main() -> None:
     portaldot = connect(args.url, args.ss58, args.type_registry_preset)
     keypair = keypair_from_seed(args.seed, args.ss58)
     metadata = find_artifact(args.metadata, ".json")
+    contract_metadata = metadata_for_substrate_interface(metadata)
     address = read_address(args.address)
 
     contract_info = portaldot.query("Contracts", "ContractInfoOf", [address])
@@ -43,7 +44,7 @@ def main() -> None:
 
     contract = ContractInstance.create_from_address(
         contract_address=address,
-        metadata_file=str(metadata),
+        metadata_file=str(contract_metadata),
         substrate=portaldot,
     )
 
@@ -56,6 +57,7 @@ def main() -> None:
             print_json("Contract events", receipt.contract_events)
         else:
             print_json("Error", receipt.error_message)
+            raise RuntimeError(f"join failed: {receipt.error_message}")
         return
 
     call_args = {}
@@ -68,4 +70,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_cli(main))

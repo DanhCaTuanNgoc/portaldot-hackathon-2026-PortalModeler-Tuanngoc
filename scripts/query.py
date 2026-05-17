@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from common import add_common_args, connect, keypair_from_seed, print_json
+from common import add_common_args, connect, keypair_from_seed, print_json, run_cli
 
 
 def main() -> None:
@@ -29,4 +29,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_cli(main))

@@ -1,6 +1,6 @@
 # PortalModeler Portaldot Proof
 
-Phase 1 proof repo for **PortalModeler — Model-driven Contract & Action Builder for Portaldot**.
+Phase 1 proof repo for **PortalModeler - Model-driven Contract & Action Builder for Portaldot**.
 
 Tagline: Turn developer intent into Portaldot-ready contracts and actions.
 
@@ -8,17 +8,19 @@ Tagline: Turn developer intent into Portaldot-ready contracts and actions.
 
 ```txt
 portaldot-proof/
-├─ contract/              # ink! Membership contract
-├─ scripts/
-│  ├─ deploy.py           # deploy contract artifacts
-│  ├─ call.py             # call join/read membership state
-│  └─ query.py            # connect and query account balance
-├─ model/
-│  ├─ membership.json     # tiny PortalModeler contract/action model
-│  └─ generate.py         # model -> skeleton/docs/checklist
-├─ generated/             # checked-in sample generator output
-├─ PAIN_POINTS.md
-└─ README.md
+|-- contract/              # ink! Membership contract
+|-- scripts/
+|   |-- deploy.py           # deploy contract artifacts
+|   |-- call.py             # call join/read membership state
+|   |-- doctor.py           # Phase 0 readiness check
+|   |-- run_node.py         # run local node and mirror logs for the UI
+|   `-- query.py            # connect and query account balance
+|-- model/
+|   |-- membership.json     # tiny PortalModeler contract/action model
+|   `-- generate.py         # model -> skeleton/docs/checklist
+|-- generated/              # checked-in sample generator output
+|-- PAIN_POINTS.md
+`-- README.md
 ```
 
 ## Docs used
@@ -45,6 +47,7 @@ portaldot-proof/
 ## Setup
 
 For a detailed Windows/WSL setup path, see [LOCAL_SETUP.md](LOCAL_SETUP.md).
+For the Phase 0 verification checklist, see [PHASE0_FOUNDATION.md](PHASE0_FOUNDATION.md).
 
 Install Python dependencies:
 
@@ -77,6 +80,20 @@ $env:PORTALDOT_URL="ws://127.0.0.1:9944"
 $env:PORTALDOT_SS58="42"
 $env:PORTALDOT_SEED="//Alice"
 $env:PORTALDOT_TYPE_REGISTRY_PRESET="substrate-node-template"
+```
+
+## Phase 0: readiness check
+
+Run the doctor first to see which foundation pieces are already available:
+
+```powershell
+python scripts/doctor.py
+```
+
+If the local node is not running yet, you can still check Python dependencies, Rust, cargo-contract, contract artifacts, and `contract-address.txt`:
+
+```powershell
+python scripts/doctor.py --skip-rpc
 ```
 
 ## Phase 1: end-to-end proof
@@ -154,8 +171,8 @@ Current model:
 
 ## Go/no-go checklist
 
-- [ ] Kết nối được Portaldot
-- [ ] Deploy được contract mẫu
-- [ ] Call được action và đọc được result/event
+- [ ] Can connect to Portaldot.
+- [ ] Can deploy the sample contract.
+- [ ] Can call an action and read the result/event.
 
 Do not spend time on polished UI before these three boxes are checked.

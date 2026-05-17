@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+from hashlib import blake2b
 import json
 import os
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from substrateinterface import Keypair, SubstrateInterface
 
@@ -68,6 +70,36 @@ def find_artifact(explicit: str | None, suffix: str) -> Path:
     return matches[0]
 
 
+def metadata_for_substrate_interface(metadata: Path, wasm: Path | None = None) -> Path:
+    metadata_dict = json.loads(metadata.read_text(encoding="utf-8-sig"))
+    if "source" in metadata_dict:
+        return metadata
+
+    if wasm is None:
+        sibling_wasm = metadata.with_suffix(".wasm")
+        wasm = sibling_wasm if sibling_wasm.exists() else find_artifact(None, ".wasm")
+
+    code_hash = blake2b(wasm.read_bytes(), digest_size=32).hexdigest()
+    metadata_dict["source"] = {
+        "hash": f"0x{code_hash}",
+        "language": "ink!",
+        "compiler": "rustc",
+    }
+
+    adapted = metadata.with_name(f"{metadata.stem}.substrateinterface.json")
+    adapted.write_text(json.dumps(metadata_dict, indent=2), encoding="utf-8")
+    return adapted
+
+
 def print_json(label: str, value: Any) -> None:
     print(f"{label}:")
     print(json.dumps(value, indent=2, default=str))
+
+
+def run_cli(entrypoint: Callable[[], None]) -> int:
+    try:
+        entrypoint()
+    except Exception as exc:  # noqa: BLE001 - CLI scripts should show concise user-facing errors.
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    return 0

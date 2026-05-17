@@ -232,6 +232,20 @@ This can build the contract, but the Portaldot docs still recommend running the 
 
 ## 10. Quick health checklist
 
+You can run the automated Phase 0 doctor from the repo root:
+
+```bash
+python scripts/doctor.py
+```
+
+If the local node is not running yet:
+
+```bash
+python scripts/doctor.py --skip-rpc
+```
+
+The manual checklist is:
+
 ```txt
 [ ] wsl --version works
 [ ] rustc --version works

@@ -1,4 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![allow(clippy::cast_possible_truncation)]
 
-include!("../lib.rs");
+use ink_lang as ink;
+
+include!("membership_contract.rs");
