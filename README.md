@@ -98,6 +98,14 @@ python scripts/doctor.py --skip-rpc
 
 ## Phase 1: end-to-end proof
 
+Phase 0 is complete in this workspace. The current local runtime used for successful deploy/call testing is:
+
+```bash
+.local-node/contracts-node-v0.42.0/substrate-contracts-node-linux/substrate-contracts-node --dev --tmp
+```
+
+The current deployed local contract address is stored in `contract-address.txt`.
+
 1. Query the chain and signer balance:
 
 ```powershell
@@ -171,8 +179,14 @@ Current model:
 
 ## Go/no-go checklist
 
-- [ ] Can connect to Portaldot.
-- [ ] Can deploy the sample contract.
-- [ ] Can call an action and read the result/event.
+- [x] Can connect to a local contracts runtime at `ws://127.0.0.1:9944`.
+- [x] Can deploy the sample contract.
+- [x] Can call an action and read the result/event.
 
-Do not spend time on polished UI before these three boxes are checked.
+The Phase 1 frontend MVP is now a visual node board. Run it with:
+
+```powershell
+cd front-end
+npm install
+npm run dev
+```

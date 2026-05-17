@@ -1,520 +1,420 @@
 import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+  Background,
+  BackgroundVariant,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  addEdge,
+  useEdgesState,
+  useNodesState,
+  type Connection,
+  type Edge,
+  type Node,
+  type NodeProps,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import {
-  Activity,
+  Boxes,
   CheckCircle2,
-  CircleDot,
-  Clock3,
-  Copy,
+  ClipboardList,
+  Code2,
+  Download,
+  FileCode2,
+  GitBranch,
+  HardDrive,
+  Link2,
   Play,
+  Plus,
+  RadioTower,
+  Save,
+  SearchCheck,
   Server,
-  ShieldCheck,
-  Terminal,
-  Zap,
+  Settings2,
+  Shield,
+  UserRound,
+  WalletCards,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 
-type LogLevel = "info" | "success" | "warning" | "error";
+type PortalNodeKind =
+  | "chainConnect"
+  | "accountSelect"
+  | "balanceQuery"
+  | "artifactSelect"
+  | "deployMembership"
+  | "joinMembership"
+  | "checkIsMember"
+  | "readJoinedAt"
+  | "eventViewer"
+  | "commandExport";
 
-type LogLine = {
-  time: string;
-  level: LogLevel;
-  text: string;
+type PortalNodeConfig = {
+  endpoint?: string;
+  seed?: string;
+  account?: string;
+  fee?: string;
+  value?: string;
+  action?: string;
+  metadataPath?: string;
+  wasmPath?: string;
+  eventName?: string;
 };
 
-type ActionId = "bootNode" | "query" | "dryRun" | "deploy" | "join";
+type PortalNodeData = {
+  kind: PortalNodeKind;
+  label: string;
+  description: string;
+  command: string;
+  status: "ready" | "success" | "warning";
+  config: PortalNodeConfig;
+} & Record<string, unknown>;
 
-const actions: Record<ActionId, { label: string; command: string; lines: Omit<LogLine, "time">[] }> = {
-  bootNode: {
-    label: "Boot Node",
-    command: "./portaldot_dev --dev --alice --name Andrea9705 --base-path /tmp/alice",
-    lines: [
-      { level: "info", text: "Running in --dev mode, RPC CORS has been disabled." },
-      { level: "info", text: "Portaldot Node" },
-      { level: "info", text: "Chain specification: Development" },
-      { level: "info", text: "Node name: Andrea9705" },
-      { level: "info", text: "Role: AUTHORITY" },
-      { level: "info", text: "Database: RocksDb at /tmp/alice/chains/dev/db" },
-      { level: "info", text: "Native runtime: portaldot-1002 (substrate-node-0.tx2.au10)" },
-      { level: "info", text: "Prometheus server started at 127.0.0.1:9615" },
-      { level: "success", text: "Listening for new connections on 127.0.0.1:9944." },
-    ],
-  },
-  query: {
-    label: "Query Chain",
-    command: "python scripts/query.py",
-    lines: [
-      { level: "info", text: "Connecting to ws://127.0.0.1:9944" },
-      { level: "success", text: "Connected chain: Development" },
-      { level: "success", text: "Alice balance detected: 50000.000000 POT" },
-    ],
-  },
-  dryRun: {
-    label: "Dry-run Gas",
-    command: "python scripts/deploy.py --fee 100000000000000 --dry-run-only",
-    lines: [
-      { level: "info", text: "Loading membership.json and membership.wasm" },
-      { level: "warning", text: "Runtime may use legacy endowment + Compact<Weight> params" },
-      { level: "info", text: "ContractsApi.instantiate dry-run requested" },
-    ],
-  },
-  deploy: {
-    label: "Deploy Local",
-    command: "python scripts/deploy.py --fee 100000000000000",
-    lines: [
-      { level: "info", text: "Deploying Membership contract from //Alice" },
-      { level: "info", text: "Using gas returned by dry-run, or fallback gas flags if unavailable" },
-      { level: "success", text: "Contract address will be written to contract-address.txt" },
-    ],
-  },
-  join: {
-    label: "Call join()",
-    command: "python scripts/call.py --action join --value 100000000000000",
-    lines: [
-      { level: "info", text: "Reading contract-address.txt" },
-      { level: "info", text: "Estimating gas with contract.read(..., 'join')" },
-      { level: "success", text: "MemberJoined event expected after successful extrinsic" },
-    ],
-  },
+type PortalFlowNode = Node<PortalNodeData, "portal">;
+
+type Template = {
+  kind: PortalNodeKind;
+  label: string;
+  description: string;
+  command: string;
+  config: PortalNodeConfig;
+  icon: typeof Server;
 };
 
-const initialLogs: LogLine[] = [
-  { time: "12:01:10", level: "success", text: "Portaldot local node listening on 127.0.0.1:9944" },
-  { time: "12:01:17", level: "info", text: "Accepted websocket connection from local dashboard" },
-  { time: "12:02:04", level: "success", text: "Rust toolchain restored at D:\\.cargo and D:\\.rustup" },
-  { time: "12:02:19", level: "success", text: "cargo check and contract unit tests passed" },
+const templates: Template[] = [
+  {
+    kind: "chainConnect",
+    label: "Chain Connect",
+    description: "Local websocket and network profile",
+    command: "python scripts/doctor.py --url {endpoint}",
+    config: { endpoint: "ws://127.0.0.1:9944" },
+    icon: Server,
+  },
+  {
+    kind: "accountSelect",
+    label: "Account Select",
+    description: "Signer seed and SS58 account",
+    command: "PORTALDOT_SEED={seed}",
+    config: { seed: "//Alice", account: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY" },
+    icon: UserRound,
+  },
+  {
+    kind: "balanceQuery",
+    label: "Balance Query",
+    description: "Read signer balance from System.Account",
+    command: "python scripts/query.py --url {endpoint}",
+    config: {},
+    icon: WalletCards,
+  },
+  {
+    kind: "artifactSelect",
+    label: "Artifact Select",
+    description: "Membership metadata and Wasm output",
+    command: "cd contract && cargo contract build --release",
+    config: {
+      metadataPath: "contract/target/ink/membership.json",
+      wasmPath: "contract/target/ink/membership.wasm",
+    },
+    icon: FileCode2,
+  },
+  {
+    kind: "deployMembership",
+    label: "Deploy Membership",
+    description: "Instantiate Membership with join fee",
+    command: "python scripts/deploy.py --url {endpoint} --fee {fee}",
+    config: { fee: "100000000000000" },
+    icon: HardDrive,
+  },
+  {
+    kind: "joinMembership",
+    label: "Join Membership",
+    description: "Execute payable join()",
+    command: "python scripts/call.py --url {endpoint} --action join --value {value}",
+    config: { value: "100000000000000", action: "join" },
+    icon: Shield,
+  },
+  {
+    kind: "checkIsMember",
+    label: "Check Is Member",
+    description: "Read is_member(account)",
+    command: "python scripts/call.py --url {endpoint} --action is_member",
+    config: { action: "is_member" },
+    icon: SearchCheck,
+  },
+  {
+    kind: "readJoinedAt",
+    label: "Read Joined At",
+    description: "Read joined_at(account)",
+    command: "python scripts/call.py --url {endpoint} --action joined_at",
+    config: { action: "joined_at" },
+    icon: ClipboardList,
+  },
+  {
+    kind: "eventViewer",
+    label: "Event Viewer",
+    description: "Expected decoded contract event",
+    command: "MemberJoined(account, joined_at, paid)",
+    config: { eventName: "MemberJoined" },
+    icon: RadioTower,
+  },
+  {
+    kind: "commandExport",
+    label: "Command Export",
+    description: "Export graph commands and checklist",
+    command: "portalmodeler export --format markdown",
+    config: {},
+    icon: Download,
+  },
 ];
 
-const statusItems = [
-  { label: "Local Node", value: "Ready", tone: "green", icon: Server },
-  { label: "Toolchain", value: "Rust 1.86", tone: "blue", icon: ShieldCheck },
-  { label: "Contract", value: "Membership", tone: "green", icon: CircleDot },
-  { label: "Gas Mode", value: "Dry-run first", tone: "yellow", icon: Zap },
-];
+const flowOrder: PortalNodeKind[] = templates.map((template) => template.kind);
 
-function now() {
-  return new Date().toLocaleTimeString("en-GB", { hour12: false });
+const initialNodes: PortalFlowNode[] = templates.map((template, index) => ({
+  id: template.kind,
+  type: "portal",
+  position: { x: 80 + (index % 5) * 260, y: 80 + Math.floor(index / 5) * 190 },
+  data: {
+    kind: template.kind,
+    label: template.label,
+    description: template.description,
+    command: template.command,
+    status: index < 2 ? "success" : "ready",
+    config: template.config,
+  },
+}));
+
+const initialEdges: Edge[] = flowOrder.slice(0, -1).map((kind, index) => ({
+  id: `${kind}-${flowOrder[index + 1]}`,
+  source: kind,
+  target: flowOrder[index + 1],
+  animated: index < 2,
+}));
+
+function hydrateCommand(template: string, config: PortalNodeConfig, endpoint = "ws://127.0.0.1:9944") {
+  return template
+    .replace("{endpoint}", config.endpoint || endpoint)
+    .replace("{seed}", config.seed || "//Alice")
+    .replace("{fee}", config.fee || "100000000000000")
+    .replace("{value}", config.value || "100000000000000");
 }
 
-function levelColor(level: LogLevel) {
-  if (level === "success") return "#33d17a";
-  if (level === "warning") return "#f5c451";
-  if (level === "error") return "#ff6b7a";
-  return "#8fb3ff";
-}
-
-function statusToneStyle(tone: string) {
-  if (tone === "green") return styles.greenIcon;
-  if (tone === "yellow") return styles.yellowIcon;
-  return styles.blueIcon;
-}
-
-type NodeLogSnapshot = {
-  updatedAt?: string;
-  command?: string;
-  lines?: LogLine[];
-};
-
-function App() {
-  const [nodeLogs, setNodeLogs] = useState(initialLogs);
-  const [sessionLogs, setSessionLogs] = useState<LogLine[]>([]);
-  const [activeAction, setActiveAction] = useState<ActionId>("deploy");
-
-  const active = actions[activeAction];
-  const logs = useMemo(() => [...nodeLogs, ...sessionLogs], [nodeLogs, sessionLogs]);
-  const completedCount = useMemo(() => logs.filter((line) => line.level === "success").length, [logs]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadNodeLogs() {
-      try {
-        const response = await fetch("/node-log.json", { cache: "no-store" });
-        if (!response.ok) return;
-
-        const snapshot = (await response.json()) as NodeLogSnapshot;
-        if (cancelled || !Array.isArray(snapshot.lines)) return;
-
-        setNodeLogs(snapshot.lines);
-      } catch {
-        return;
-      }
-    }
-
-    void loadNodeLogs();
-    const interval = window.setInterval(() => {
-      void loadNodeLogs();
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, []);
-
-  function runAction(id: ActionId) {
-    setActiveAction(id);
-    const stamped = actions[id].lines.map((line) => ({ ...line, time: now() }));
-    setSessionLogs((current) => [...current, { time: now(), level: "info", text: `$ ${actions[id].command}` }, ...stamped]);
-  }
+function PortalNode({ data, selected }: NodeProps<PortalFlowNode>) {
+  const template = templates.find((item) => item.kind === data.kind) || templates[0];
+  const Icon = template.icon;
 
   return (
-    <View style={styles.screen}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.kicker}>PortalModeler Control Surface</Text>
-          <Text style={styles.title}>Portaldot Local Deploy Console</Text>
-        </View>
-        <View style={styles.headerPill}>
-          <Activity size={16} color="#33d17a" />
-          <Text style={styles.headerPillText}>Desktop preview</Text>
-        </View>
-      </View>
-
-      <View style={styles.grid}>
-        <View style={styles.leftRail}>
-          <Text style={styles.sectionLabel}>Runtime Snapshot</Text>
-          {statusItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <View key={item.label} style={styles.statusCard}>
-                <View style={[styles.statusIcon, statusToneStyle(item.tone)]}>
-                  <Icon size={17} color="#f8fbff" />
-                </View>
-                <View>
-                  <Text style={styles.statusLabel}>{item.label}</Text>
-                  <Text style={styles.statusValue}>{item.value}</Text>
-                </View>
-              </View>
-            );
-          })}
-
-          <View style={styles.metricPanel}>
-            <Text style={styles.metricValue}>{completedCount}</Text>
-            <Text style={styles.metricLabel}>successful checkpoints in this session</Text>
-          </View>
-        </View>
-
-        <View style={styles.mainPanel}>
-          <View style={styles.panelHeader}>
-            <View style={styles.panelTitleGroup}>
-              <Terminal size={19} color="#8fb3ff" />
-              <Text style={styles.panelTitle}>Deploy Terminal</Text>
-            </View>
-            <View style={styles.liveBadge}>
-              <Clock3 size={14} color="#9da8bd" />
-              <Text style={styles.liveBadgeText}>local session</Text>
-            </View>
-          </View>
-
-          <ScrollView style={styles.terminal} contentContainerStyle={styles.terminalContent}>
-            {logs.map((line, index) => (
-              <View key={`${line.time}-${index}`} style={styles.logLine}>
-                <Text style={styles.logTime}>{line.time}</Text>
-                <Text style={[styles.logLevel, { color: levelColor(line.level) }]}>{line.level}</Text>
-                <Text style={styles.logText}>{line.text}</Text>
-              </View>
-            ))}
-          </ScrollView>
-
-          <View style={styles.actions}>
-            {(Object.keys(actions) as ActionId[]).map((id) => (
-              <Pressable
-                key={id}
-                onPress={() => runAction(id)}
-                style={[styles.actionButton, activeAction === id && styles.actionButtonActive]}
-              >
-                <Play size={14} color={activeAction === id ? "#071018" : "#aeb8c8"} />
-                <Text style={[styles.actionText, activeAction === id && styles.actionTextActive]}>
-                  {actions[id].label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
-
-        <View style={styles.rightPanel}>
-          <Text style={styles.sectionLabel}>Active Command</Text>
-          <View style={styles.commandBox}>
-            <Text style={styles.commandText}>{active.command}</Text>
-            <Copy size={16} color="#9da8bd" />
-          </View>
-
-          <View style={styles.checklist}>
-            {[
-              "scripts/run_node.py writes live node-log.json",
-              "python scripts/query.py",
-              "contract artifacts under target/ink",
-              "contract-address.txt after deploy",
-            ].map((item) => (
-              <View key={item} style={styles.checkItem}>
-                <CheckCircle2 size={16} color="#33d17a" />
-                <Text style={styles.checkText}>{item}</Text>
-              </View>
-            ))}
-          </View>
-        </View>
-      </View>
-    </View>
+    <div className={`portal-node ${selected ? "selected" : ""}`}>
+      <div className="portal-node__top">
+        <span className={`portal-node__icon ${data.status}`}>
+          <Icon size={18} />
+        </span>
+        <span className={`portal-node__status ${data.status}`}>{data.status}</span>
+      </div>
+      <div className="portal-node__title">{data.label}</div>
+      <div className="portal-node__description">{data.description}</div>
+      <div className="portal-node__command">{hydrateCommand(data.command, data.config)}</div>
+    </div>
   );
 }
 
-const styles = StyleSheet.create({
-  screen: {
-    minHeight: 720,
-    padding: 28,
-  },
-  header: {
-    alignItems: "center",
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 22,
-  },
-  kicker: {
-    color: "#6f7b91",
-    fontSize: 12,
-    fontWeight: "700",
-    letterSpacing: 0,
-    textTransform: "uppercase",
-  },
-  title: {
-    color: "#f5f8ff",
-    fontSize: 31,
-    fontWeight: "800",
-    letterSpacing: 0,
-    marginTop: 4,
-  },
-  headerPill: {
-    alignItems: "center",
-    backgroundColor: "rgba(51, 209, 122, 0.11)",
-    borderColor: "rgba(51, 209, 122, 0.28)",
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-  },
-  headerPillText: {
-    color: "#c9f7dc",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  grid: {
-    flexDirection: "row",
-    gap: 18,
-  },
-  leftRail: {
-    width: 260,
-    gap: 12,
-  },
-  sectionLabel: {
-    color: "#7f8ba0",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0,
-    marginBottom: 2,
-    textTransform: "uppercase",
-  },
-  statusCard: {
-    alignItems: "center",
-    backgroundColor: "rgba(17, 21, 31, 0.82)",
-    borderColor: "rgba(255,255,255,0.08)",
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 12,
-    padding: 14,
-  },
-  statusIcon: {
-    alignItems: "center",
-    borderRadius: 8,
-    height: 36,
-    justifyContent: "center",
-    width: 36,
-  },
-  greenIcon: { backgroundColor: "#168650" },
-  blueIcon: { backgroundColor: "#2f63d7" },
-  yellowIcon: { backgroundColor: "#b37d12" },
-  statusLabel: {
-    color: "#7f8ba0",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  statusValue: {
-    color: "#f5f8ff",
-    fontSize: 15,
-    fontWeight: "800",
-    marginTop: 2,
-  },
-  metricPanel: {
-    backgroundColor: "rgba(17, 21, 31, 0.82)",
-    borderColor: "rgba(255,255,255,0.08)",
-    borderRadius: 8,
-    borderWidth: 1,
-    marginTop: 6,
-    padding: 18,
-  },
-  metricValue: {
-    color: "#33d17a",
-    fontSize: 42,
-    fontWeight: "800",
-  },
-  metricLabel: {
-    color: "#9da8bd",
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 4,
-  },
-  mainPanel: {
-    backgroundColor: "rgba(12, 15, 22, 0.9)",
-    borderColor: "rgba(255,255,255,0.09)",
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    minHeight: 640,
-    overflow: "hidden",
-  },
-  panelHeader: {
-    alignItems: "center",
-    borderBottomColor: "rgba(255,255,255,0.08)",
-    borderBottomWidth: 1,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-  },
-  panelTitleGroup: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 9,
-  },
-  panelTitle: {
-    color: "#f5f8ff",
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  liveBadge: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 7,
-  },
-  liveBadgeText: {
-    color: "#9da8bd",
-    fontSize: 12,
-    fontWeight: "700",
-  },
-  terminal: {
-    height: 500,
-  },
-  terminalContent: {
-    padding: 18,
-  },
-  logLine: {
-    alignItems: "flex-start",
-    flexDirection: "row",
-    gap: 12,
-    paddingVertical: 7,
-  },
-  logTime: {
-    color: "#667085",
-    fontFamily: "JetBrains Mono",
-    fontSize: 12,
-    width: 70,
-  },
-  logLevel: {
-    fontFamily: "JetBrains Mono",
-    fontSize: 12,
-    fontWeight: "800",
-    textTransform: "uppercase",
-    width: 70,
-  },
-  logText: {
-    color: "#d9e2f2",
-    flex: 1,
-    fontFamily: "JetBrains Mono",
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  actions: {
-    borderTopColor: "rgba(255,255,255,0.08)",
-    borderTopWidth: 1,
-    flexDirection: "row",
-    gap: 10,
-    padding: 14,
-  },
-  actionButton: {
-    alignItems: "center",
-    backgroundColor: "rgba(255,255,255,0.04)",
-    borderColor: "rgba(255,255,255,0.08)",
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: "row",
-    flex: 1,
-    gap: 8,
-    justifyContent: "center",
-    minHeight: 42,
-    paddingHorizontal: 10,
-  },
-  actionButtonActive: {
-    backgroundColor: "#33d17a",
-    borderColor: "#33d17a",
-  },
-  actionText: {
-    color: "#c4cedd",
-    fontSize: 13,
-    fontWeight: "800",
-  },
-  actionTextActive: {
-    color: "#071018",
-  },
-  rightPanel: {
-    backgroundColor: "rgba(17, 21, 31, 0.82)",
-    borderColor: "rgba(255,255,255,0.08)",
-    borderRadius: 8,
-    borderWidth: 1,
-    padding: 16,
-    width: 320,
-  },
-  commandBox: {
-    alignItems: "flex-start",
-    backgroundColor: "rgba(0,0,0,0.28)",
-    borderColor: "rgba(255,255,255,0.08)",
-    borderRadius: 8,
-    borderWidth: 1,
-    flexDirection: "row",
-    gap: 10,
-    justifyContent: "space-between",
-    marginTop: 8,
-    padding: 14,
-  },
-  commandText: {
-    color: "#dce7ff",
-    flex: 1,
-    fontFamily: "JetBrains Mono",
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  checklist: {
-    gap: 12,
-    marginTop: 18,
-  },
-  checkItem: {
-    alignItems: "center",
-    flexDirection: "row",
-    gap: 9,
-  },
-  checkText: {
-    color: "#c6cfde",
-    flex: 1,
-    fontSize: 13,
-    lineHeight: 18,
-  },
-});
+const nodeTypes = { portal: PortalNode };
+
+function configEntries(config: PortalNodeConfig) {
+  return Object.entries(config).filter(([, value]) => value !== undefined);
+}
+
+function App() {
+  const [nodes, setNodes, onNodesChange] = useNodesState<PortalFlowNode>(initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [selectedNodeId, setSelectedNodeId] = useState(initialNodes[0].id);
+
+  const selectedNode = nodes.find((node) => node.id === selectedNodeId) || nodes[0];
+  const endpoint = nodes.find((node) => node.data.kind === "chainConnect")?.data.config.endpoint;
+
+  const orderedNodes = useMemo(() => {
+    return [...nodes].sort((a, b) => flowOrder.indexOf(a.data.kind) - flowOrder.indexOf(b.data.kind));
+  }, [nodes]);
+
+  const commandLines = useMemo(() => {
+    return orderedNodes
+      .filter((node) => node.data.kind !== "eventViewer" && node.data.kind !== "commandExport")
+      .map((node) => hydrateCommand(node.data.command, node.data.config, endpoint));
+  }, [endpoint, orderedNodes]);
+
+  const markdownExport = useMemo(() => {
+    const steps = orderedNodes
+      .map((node, index) => `${index + 1}. ${node.data.label}: \`${hydrateCommand(node.data.command, node.data.config, endpoint)}\``)
+      .join("\n");
+    return `# PortalModeler Membership Flow\n\n${steps}\n`;
+  }, [endpoint, orderedNodes]);
+
+  const graphExport = useMemo(() => {
+    return JSON.stringify(
+      {
+        nodes: nodes.map(({ id, position, data }) => ({ id, kind: data.kind, position, config: data.config })),
+        edges: edges.map(({ id, source, target }) => ({ id, source, target })),
+      },
+      null,
+      2,
+    );
+  }, [edges, nodes]);
+
+  const onConnect = useCallback(
+    (connection: Connection) => setEdges((current) => addEdge({ ...connection, animated: true }, current)),
+    [setEdges],
+  );
+
+  function addTemplate(template: Template) {
+    const id = `${template.kind}-${Date.now()}`;
+    setNodes((current) => [
+      ...current,
+      {
+        id,
+        type: "portal",
+        position: { x: 160 + current.length * 18, y: 120 + current.length * 12 },
+        data: {
+          kind: template.kind,
+          label: template.label,
+          description: template.description,
+          command: template.command,
+          status: "ready",
+          config: template.config,
+        },
+      },
+    ]);
+    setSelectedNodeId(id);
+  }
+
+  function updateConfig(key: keyof PortalNodeConfig, value: string) {
+    setNodes((current) =>
+      current.map((node) =>
+        node.id === selectedNode.id
+          ? { ...node, data: { ...node.data, config: { ...node.data.config, [key]: value } } }
+          : node,
+      ),
+    );
+  }
+
+  function markSelectedSuccess() {
+    setNodes((current) =>
+      current.map((node) =>
+        node.id === selectedNode.id ? { ...node, data: { ...node.data, status: "success" } } : node,
+      ),
+    );
+  }
+
+  return (
+    <main className="app-shell">
+      <header className="topbar">
+        <div>
+          <div className="eyebrow">PortalModeler</div>
+          <h1>Membership Flow Board</h1>
+        </div>
+        <div className="topbar__actions">
+          <span className="health-pill">
+            <CheckCircle2 size={16} />
+            Phase 0 ready
+          </span>
+          <button className="icon-button" title="Mark selected node as success" onClick={markSelectedSuccess}>
+            <Play size={17} />
+          </button>
+          <button className="icon-button" title="Export graph JSON">
+            <Save size={17} />
+          </button>
+        </div>
+      </header>
+
+      <section className="workspace">
+        <aside className="palette-panel" aria-label="Node palette">
+          <div className="panel-heading">
+            <Boxes size={18} />
+            <span>Palette</span>
+          </div>
+          <div className="palette-list">
+            {templates.map((template) => {
+              const Icon = template.icon;
+              return (
+                <button key={template.kind} className="palette-item" onClick={() => addTemplate(template)}>
+                  <Icon size={17} />
+                  <span>{template.label}</span>
+                  <Plus size={15} />
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+
+        <section className="board-panel" aria-label="Visual node board">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onEdgesChange={onEdgesChange}
+            onConnect={onConnect}
+            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+            fitView
+          >
+            <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
+            <MiniMap pannable zoomable nodeColor="#254f85" maskColor="rgba(4, 8, 14, 0.72)" />
+            <Controls />
+          </ReactFlow>
+        </section>
+
+        <aside className="inspector-panel" aria-label="Node inspector">
+          <div className="panel-heading">
+            <Settings2 size={18} />
+            <span>Inspector</span>
+          </div>
+
+          <div className="inspector-card">
+            <div className="inspector-title">{selectedNode.data.label}</div>
+            <div className="inspector-description">{selectedNode.data.description}</div>
+            <div className="field-stack">
+              {configEntries(selectedNode.data.config).map(([key, value]) => (
+                <label key={key} className="field">
+                  <span>{key}</span>
+                  <input value={String(value)} onChange={(event) => updateConfig(key as keyof PortalNodeConfig, event.target.value)} />
+                </label>
+              ))}
+              {configEntries(selectedNode.data.config).length === 0 ? (
+                <div className="empty-note">This node has no editable fields.</div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="panel-heading small">
+            <Code2 size={17} />
+            <span>Command</span>
+          </div>
+          <pre className="command-preview">{hydrateCommand(selectedNode.data.command, selectedNode.data.config, endpoint)}</pre>
+        </aside>
+      </section>
+
+      <section className="bottom-panel">
+        <div className="export-pane">
+          <div className="panel-heading">
+            <GitBranch size={18} />
+            <span>Command Sheet</span>
+          </div>
+          <pre>{commandLines.join("\n")}</pre>
+        </div>
+        <div className="export-pane">
+          <div className="panel-heading">
+            <Link2 size={18} />
+            <span>Graph JSON</span>
+          </div>
+          <pre>{graphExport}</pre>
+        </div>
+        <div className="export-pane">
+          <div className="panel-heading">
+            <Download size={18} />
+            <span>Markdown Export</span>
+          </div>
+          <pre>{markdownExport}</pre>
+        </div>
+      </section>
+    </main>
+  );
+}
 
 export default App;

@@ -135,7 +135,12 @@ Expected result:
 Last checked with:
 
 ```powershell
-python scripts/doctor.py --skip-rpc
+python scripts/doctor.py --url ws://127.0.0.1:9944
+python scripts/query.py --url ws://127.0.0.1:9944
+python scripts/deploy.py --url ws://127.0.0.1:9944 --fee 100000000000000
+python scripts/call.py --url ws://127.0.0.1:9944 --action join --value 100000000000000
+python scripts/call.py --url ws://127.0.0.1:9944 --action is_member
+python scripts/call.py --url ws://127.0.0.1:9944 --action joined_at
 python -m py_compile scripts/doctor.py scripts/common.py scripts/query.py scripts/deploy.py scripts/call.py scripts/run_node.py
 python model/generate.py model/membership.json --out generated
 ```
@@ -147,19 +152,23 @@ Observed:
 - Python scripts compile.
 - Model generator runs.
 - Existing WASM artifact is present at `contract/target/ink/membership.wasm`.
-- `rustc`, `cargo`, and `cargo contract` are not available in the current Windows PATH.
-- `membership.json` contract metadata is missing in `contract/target/ink`.
-- `contract-address.txt` is missing because deploy has not completed in this workspace.
-- Local RPC was not verified in this run because the doctor was run with `--skip-rpc`.
+- Existing metadata artifact is present at `contract/target/ink/membership.json`.
+- Local RPC is reachable at `ws://127.0.0.1:9944`.
+- `contract-address.txt` is present and points to a deployed local Membership contract.
+- `join()` succeeds with value `100000000000000`.
+- `is_member` returns `true` for Alice after joining.
+- `joined_at` returns a timestamp-like value after joining.
+- The working local runtime is `substrate-contracts-node v0.42.0` under `.local-node/contracts-node-v0.42.0`.
+- Portaldot's bundled local node still appears runtime-incompatible for this ink! 5.x artifact; keep it as reference, not the primary Phase 0 runtime.
 
 ## Phase 0 Exit Criteria
 
-- [ ] `python scripts/doctor.py` passes with the local node running.
-- [ ] `python scripts/query.py` connects to `ws://127.0.0.1:9944`.
-- [ ] `cargo contract build --release` creates both `.wasm` and metadata `.json`.
-- [ ] `python scripts/deploy.py --fee 100000000000000` writes `contract-address.txt`.
-- [ ] `python scripts/call.py --action join --value 100000000000000` succeeds.
-- [ ] `python scripts/call.py --action is_member` returns the expected state.
-- [ ] `python scripts/call.py --action joined_at` returns the expected state.
+- [x] `python scripts/doctor.py` passes with the local node running.
+- [x] `python scripts/query.py` connects to `ws://127.0.0.1:9944`.
+- [x] `cargo contract build --release` creates both `.wasm` and metadata `.json`.
+- [x] `python scripts/deploy.py --fee 100000000000000` writes `contract-address.txt`.
+- [x] `python scripts/call.py --action join --value 100000000000000` succeeds.
+- [x] `python scripts/call.py --action is_member` returns the expected state.
+- [x] `python scripts/call.py --action joined_at` returns the expected state.
 
 Once these pass, the command flow is stable enough for the visual node board to generate and orchestrate.
