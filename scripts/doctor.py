@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import importlib.util
 import socket
 import subprocess
@@ -69,6 +70,72 @@ def check_artifacts() -> bool:
         else "missing; run `cargo contract build --release` in contract/",
     )
     return ok_wasm and ok_metadata
+
+
+def metadata_version(metadata: dict[str, object]) -> int:
+    version = metadata.get("version", 0)
+    try:
+        return int(version)
+    except (TypeError, ValueError):
+        return 0
+
+
+def ink_language_version(metadata: dict[str, object]) -> int:
+    source = metadata.get("source", {})
+    language = str(source.get("language", ""))
+    if "ink!" not in language:
+        return 0
+
+    tokens = language.replace("!", " ").replace(".", " ").split()
+    for index, token in enumerate(tokens):
+        if token.lower() == "ink" and index + 1 < len(tokens):
+            try:
+                return int(tokens[index + 1])
+            except ValueError:
+                return 0
+    return 0
+
+
+def check_runtime_compatibility(url: str, timeout: float) -> bool:
+    metadata_files = artifact_matches(".json")
+    if not metadata_files:
+        return status(
+            False,
+            "Runtime compatibility",
+            "missing metadata JSON; build the contract first with `cargo contract build --release`",
+        )
+
+    try:
+        from common import connect  # Imported lazily so the doctor still reports dependency issues cleanly.
+    except Exception as exc:  # noqa: BLE001
+        return status(False, "Runtime compatibility", f"cannot import deploy helpers ({exc})")
+
+    metadata = json.loads(metadata_files[0].read_text(encoding="utf-8-sig"))
+    artifact_version = metadata_version(metadata)
+    artifact_ink_version = ink_language_version(metadata)
+
+    try:
+        portaldot = connect(url, DEFAULT_SS58, DEFAULT_TYPE_REGISTRY_PRESET)
+        call_function = portaldot.get_metadata_call_function("Contracts", "instantiate_with_code")
+        call_arg_names = [arg["name"] for arg in call_function.value["args"]]
+        supports_modern_instantiate = "endowment" in call_arg_names
+    except Exception as exc:  # noqa: BLE001
+        return status(False, "Runtime compatibility", f"could not inspect Contracts metadata ({exc})")
+
+    if not supports_modern_instantiate and artifact_ink_version >= 4:
+        return status(
+            True,
+            "Runtime compatibility",
+            "legacy Contracts.instantiate_with_code detected against ink! "
+            f"{artifact_ink_version}.x artifact (metadata version {artifact_version}); deploy will auto-strip the constructor selector",
+        )
+
+    signature = "endowment, Compact<Weight>, code, data, salt" if supports_modern_instantiate else ", ".join(call_arg_names)
+    return status(
+        True,
+        "Runtime compatibility",
+        f"Contracts.instantiate_with_code = {signature}; artifact ink! {artifact_ink_version}.x (metadata version {artifact_version})",
+    )
 
 
 def check_address_file(path: Path) -> bool:
@@ -156,6 +223,7 @@ def main() -> int:
 
     if not args.skip_rpc:
         checks.append(check_rpc(args.url, args.timeout))
+        checks.append(check_runtime_compatibility(args.url, args.timeout))
 
     print()
     if all(checks):

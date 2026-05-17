@@ -1,6 +1,6 @@
 #[ink::contract]
 mod membership {
-    use ink_storage::Mapping;
+    use ink::storage::Mapping;
 
     const DEFAULT_JOIN_FEE: Balance = 100_000_000_000_000;
 
@@ -16,6 +16,12 @@ mod membership {
         account: AccountId,
         joined_at: Timestamp,
         paid: Balance,
+    }
+
+    impl Default for Membership {
+        fn default() -> Self {
+            Self::new()
+        }
     }
 
     impl Membership {
@@ -64,16 +70,15 @@ mod membership {
     #[cfg(test)]
     mod tests {
         use super::*;
-        use ink_env::test;
-        use ink_lang as ink;
+        use ink::env::test;
 
         #[ink::test]
         fn join_records_membership() {
-            let accounts = test::default_accounts::<ink_env::DefaultEnvironment>();
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
             let mut contract = Membership::new();
 
-            test::set_caller::<ink_env::DefaultEnvironment>(accounts.alice);
-            test::set_value_transferred::<ink_env::DefaultEnvironment>(DEFAULT_JOIN_FEE);
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(DEFAULT_JOIN_FEE);
             contract.join();
 
             assert!(contract.is_member(accounts.alice));
@@ -83,11 +88,11 @@ mod membership {
         #[ink::test]
         #[should_panic(expected = "insufficient join fee")]
         fn join_rejects_underpayment() {
-            let accounts = test::default_accounts::<ink_env::DefaultEnvironment>();
+            let accounts = test::default_accounts::<ink::env::DefaultEnvironment>();
             let mut contract = Membership::new();
 
-            test::set_caller::<ink_env::DefaultEnvironment>(accounts.alice);
-            test::set_value_transferred::<ink_env::DefaultEnvironment>(DEFAULT_JOIN_FEE - 1);
+            test::set_caller::<ink::env::DefaultEnvironment>(accounts.alice);
+            test::set_value_transferred::<ink::env::DefaultEnvironment>(DEFAULT_JOIN_FEE - 1);
             contract.join();
         }
     }

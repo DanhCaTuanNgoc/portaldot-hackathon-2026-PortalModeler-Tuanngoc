@@ -45,6 +45,30 @@ def strip_constructor_selector(constructor_data: ScaleBytes) -> ScaleBytes:
     return ScaleBytes(f"0x{data[10:]}")
 
 
+def metadata_version(metadata: dict[str, Any]) -> int:
+    version = metadata.get("version", 0)
+    try:
+        return int(version)
+    except (TypeError, ValueError):
+        return 0
+
+
+def ink_language_version(metadata: dict[str, Any]) -> int:
+    source = metadata.get("source", {})
+    language = str(source.get("language", ""))
+    if "ink!" not in language:
+        return 0
+
+    tokens = language.replace("!", " ").replace(".", " ").split()
+    for index, token in enumerate(tokens):
+        if token.lower() == "ink" and index + 1 < len(tokens):
+            try:
+                return int(tokens[index + 1])
+            except ValueError:
+                return 0
+    return 0
+
+
 def constructor_args(metadata: dict[str, Any], constructor_name: str, fee: int) -> dict[str, Any]:
     for constructor in metadata["spec"]["constructors"]:
         if constructor["label"] != constructor_name:
@@ -59,6 +83,43 @@ def constructor_args(metadata: dict[str, Any], constructor_name: str, fee: int) 
         return args
 
     raise ValueError(f'Constructor "{constructor_name}" not found')
+
+
+def preflight_runtime_compatibility(
+    portaldot: Any,
+    metadata: dict[str, Any],
+    legacy_no_selector: bool,
+) -> None:
+    call_function = portaldot.get_metadata_call_function("Contracts", "instantiate_with_code")
+    call_arg_names = [arg["name"] for arg in call_function.value["args"]]
+    supports_modern_instantiate = "endowment" in call_arg_names
+    artifact_version = metadata_version(metadata)
+    artifact_ink_version = ink_language_version(metadata)
+
+    if not supports_modern_instantiate:
+        print(
+            "Preflight: legacy Contracts.instantiate_with_code detected; deploy will fall back to selector-stripping compatibility mode if needed."
+        )
+    else:
+        print(
+            "Preflight: modern Contracts.instantiate_with_code detected; deploy will try the standard constructor payload first."
+        )
+
+    print(f"Preflight: contract artifact ink! {artifact_ink_version}.x (metadata version {artifact_version})")
+
+
+def constructor_payload_variants(constructor_data: ScaleBytes, allow_legacy_fallback: bool) -> list[tuple[str, ScaleBytes]]:
+    variants: list[tuple[str, ScaleBytes]] = [("modern", constructor_data)]
+    if allow_legacy_fallback:
+        legacy_data = strip_constructor_selector(constructor_data)
+        if legacy_data.to_hex() != constructor_data.to_hex():
+            variants.append(("legacy", legacy_data))
+    return variants
+
+
+def is_constructor_decode_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "Input buffer has still data left after decoding" in message or "Bad input data provided to instantiate" in message
 
 
 def dry_run_instantiate(
@@ -165,6 +226,11 @@ def main() -> None:
         help="Dry-run constructor gas estimation, print the result, and do not submit an extrinsic.",
     )
     parser.add_argument(
+        "--legacy-no-selector",
+        action="store_true",
+        help="Send constructor args without the 4-byte selector for older local runtimes.",
+    )
+    parser.add_argument(
         "--out",
         default=str(Path(__file__).resolve().parents[1] / "contract-address.txt"),
         help="File to write deployed contract address.",
@@ -193,59 +259,82 @@ def main() -> None:
         name="new",
         args=constructor_args(code.metadata.metadata_dict, "new", args.fee),
     )
+    preflight_runtime_compatibility(portaldot, code.metadata.metadata_dict, args.legacy_no_selector)
     call_function = portaldot.get_metadata_call_function("Contracts", "instantiate_with_code")
     call_arg_names = {arg["name"] for arg in call_function.value["args"]}
     uses_weight_v2 = "endowment" not in call_arg_names
-    if not uses_weight_v2:
-        constructor_data = strip_constructor_selector(constructor_data)
-        print("Legacy Contracts.instantiate_with_code detected; using constructor args without selector.")
-    gas_limit = make_fallback_gas(args, uses_weight_v2)
+    allow_legacy_fallback = args.legacy_no_selector or (not uses_weight_v2 and metadata_version(code.metadata.metadata_dict) < 5)
+    payload_variants = constructor_payload_variants(constructor_data, allow_legacy_fallback)
 
-    if not args.no_dry_run_gas:
-        try:
-            dry_run = dry_run_instantiate(portaldot, keypair, code, constructor_data, args, uses_weight_v2)
-            gas_limit = dry_run["gas_required"]
-            print(f"Dry-run gas_required: {gas_limit}")
-            if dry_run["storage_deposit"] is not None:
-                print(f"Dry-run storage_deposit: {dry_run['storage_deposit']}")
-            if args.dry_run_only:
-                print("Dry-run only; no extrinsic submitted.")
-                return
-        except Exception as exc:  # noqa: BLE001 - fallback is intentional for runtime/API variance.
-            if args.dry_run_only:
-                raise
-            print(f"Dry-run gas unavailable, using fallback gas flags. Reason: {exc}")
-    elif args.dry_run_only:
-        raise RuntimeError("--dry-run-only cannot be combined with --no-dry-run-gas.")
+    last_error: Exception | None = None
+    receipt = None
+    for index, (payload_label, payload_data) in enumerate(payload_variants, start=1):
+        if payload_label == "legacy":
+            print("Legacy constructor payload selected as fallback; stripping the 4-byte selector.")
 
-    if "endowment" in call_arg_names:
-        call_params = {
-            "endowment": args.value,
-            "gas_limit": gas_limit,
-            "code": f"0x{code.wasm_bytes.hex()}",
-            "data": constructor_data.to_hex(),
-            "salt": args.salt,
-        }
-    else:
-        call_params = {
-            "value": args.value,
-            "gas_limit": gas_limit,
-            "storage_deposit_limit": None,
-            "code": f"0x{code.wasm_bytes.hex()}",
-            "data": constructor_data.to_hex(),
-            "salt": args.salt,
-        }
+        gas_limit = make_fallback_gas(args, uses_weight_v2)
 
-    call = portaldot.compose_call(
-        call_module="Contracts",
-        call_function="instantiate_with_code",
-        call_params=call_params,
-    )
-    extrinsic = portaldot.create_signed_extrinsic(call=call, keypair=keypair)
-    receipt = portaldot.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+        if not args.no_dry_run_gas:
+            try:
+                dry_run = dry_run_instantiate(portaldot, keypair, code, payload_data, args, uses_weight_v2)
+                gas_limit = dry_run["gas_required"]
+                print(f"Dry-run gas_required: {gas_limit}")
+                if dry_run["storage_deposit"] is not None:
+                    print(f"Dry-run storage_deposit: {dry_run['storage_deposit']}")
+                if args.dry_run_only:
+                    print("Dry-run only; no extrinsic submitted.")
+                    return
+            except Exception as exc:  # noqa: BLE001 - fallback is intentional for runtime/API variance.
+                last_error = exc
+                if args.dry_run_only:
+                    raise
+                if payload_label == "modern" and len(payload_variants) > index:
+                    if is_constructor_decode_error(exc):
+                        print("Modern constructor payload was rejected; retrying with selector-stripped legacy payload.")
+                        continue
+                print(f"Dry-run gas unavailable, using fallback gas flags. Reason: {exc}")
+        elif args.dry_run_only:
+            raise RuntimeError("--dry-run-only cannot be combined with --no-dry-run-gas.")
 
-    if not receipt.is_success:
+        if "endowment" in call_arg_names:
+            call_params = {
+                "endowment": args.value,
+                "gas_limit": gas_limit,
+                "code": f"0x{code.wasm_bytes.hex()}",
+                "data": payload_data.to_hex(),
+                "salt": args.salt,
+            }
+        else:
+            call_params = {
+                "value": args.value,
+                "gas_limit": gas_limit,
+                "storage_deposit_limit": None,
+                "code": f"0x{code.wasm_bytes.hex()}",
+                "data": payload_data.to_hex(),
+                "salt": args.salt,
+            }
+
+        call = portaldot.compose_call(
+            call_module="Contracts",
+            call_function="instantiate_with_code",
+            call_params=call_params,
+        )
+        extrinsic = portaldot.create_signed_extrinsic(call=call, keypair=keypair)
+        receipt = portaldot.submit_extrinsic(extrinsic, wait_for_inclusion=True)
+
+        if receipt.is_success:
+            break
+
+        if payload_label == "modern" and len(payload_variants) > index and is_constructor_decode_error(receipt.error_message if isinstance(receipt.error_message, Exception) else Exception(str(receipt.error_message))):
+            print("Modern submit payload was rejected; retrying with selector-stripped legacy payload.")
+            continue
+
         raise RuntimeError(f"Deploy failed: {describe_receipt_failure(receipt)}")
+
+    if receipt is None:
+        if last_error is not None:
+            raise RuntimeError(f"Deploy failed before submission: {last_error}")
+        raise RuntimeError("Deploy failed before submission: no payload variants were available")
 
     contract_address = extract_contract_address(receipt)
 
