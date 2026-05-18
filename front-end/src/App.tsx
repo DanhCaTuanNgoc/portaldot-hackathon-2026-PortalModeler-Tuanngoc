@@ -14,6 +14,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
+  ArrowRight,
   Boxes,
   CheckCircle2,
   ClipboardList,
@@ -38,6 +39,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import heroImage from "./assets/hero.png";
 
 type PortalNodeKind =
   | "chainConnect"
@@ -134,6 +136,8 @@ type ChainSnapshot = {
   };
   events: SnapshotEvent[];
 };
+
+type Page = "home" | "workbench";
 
 const templates: Template[] = [
   {
@@ -277,7 +281,143 @@ function configEntries(config: PortalNodeConfig) {
   return Object.entries(config).filter(([, value]) => value !== undefined);
 }
 
-function App() {
+function useRevealOnScroll() {
+  useEffect(() => {
+    const sections = Array.from(document.querySelectorAll<HTMLElement>(".reveal-section"));
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-visible");
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.18 },
+    );
+
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, []);
+}
+
+function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
+  useRevealOnScroll();
+
+  return (
+    <main className="home-shell">
+      <nav className="home-nav">
+        <div className="brand-mark">
+          <span>PM</span>
+          <strong>PortalModeler</strong>
+        </div>
+        <div className="home-nav__links">
+          <a href="#workflow">Workflow</a>
+          <a href="#execution">Execution</a>
+          <a href="#visualization">Visualization</a>
+          <button className="home-nav__button" onClick={onOpenWorkbench}>
+            Open app
+          </button>
+        </div>
+      </nav>
+
+      <section className="home-hero">
+        <img className="home-hero__asset" src={heroImage} alt="" loading="eager" />
+        <div className="home-hero__grid" aria-hidden="true" />
+        <div className="home-hero__content">
+          <div className="hero-kicker">Model-driven contract workflows for Portaldot</div>
+          <h1>Build, run, and explain blockchain contract flows from a visual dev board.</h1>
+          <p>
+            PortalModeler turns Portaldot setup, contract deployment, calls, state reads, and event review into one
+            executable visual model.
+          </p>
+          <div className="hero-actions">
+            <button className="primary-cta" onClick={onOpenWorkbench}>
+              Launch workbench
+              <ArrowRight size={18} />
+            </button>
+            <a className="secondary-cta" href="#workflow">
+              Explore the flow
+            </a>
+          </div>
+        </div>
+        <div className="hero-status-strip">
+          <span>Phase 0 ready</span>
+          <span>Visual board</span>
+          <span>Safe script runner</span>
+          <span>State timeline</span>
+        </div>
+      </section>
+
+      <section id="workflow" className="home-section reveal-section">
+        <div className="section-copy">
+          <span className="section-label">Visual source of truth</span>
+          <h2>One graph for the entire local contract path.</h2>
+          <p>
+            The board maps each step to real repo scripts while keeping configuration visible: endpoint, signer,
+            artifacts, deploy fee, call value, and state reads.
+          </p>
+        </div>
+        <div className="feature-grid">
+          {[
+            ["Chain Connect", "Validate local RPC and runtime readiness."],
+            ["Deploy Membership", "Instantiate the ink! contract using safe defaults."],
+            ["Read State", "Inspect is_member and joined_at without digging through terminal output."],
+          ].map(([title, body]) => (
+            <article key={title} className="feature-card">
+              <span>{title}</span>
+              <p>{body}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section id="execution" className="home-section reveal-section">
+        <div className="section-copy">
+          <span className="section-label">Developer-safe execution</span>
+          <h2>Run nodes without turning the browser into a shell.</h2>
+          <p>
+            Phase 2 exposes a whitelist runner through Vite middleware. The UI can run known workflow nodes, refresh
+            health, and stream command output into structured logs.
+          </p>
+        </div>
+        <div className="terminal-showcase">
+          <div>$ python scripts/query.py --url ws://127.0.0.1:9944</div>
+          <div className="terminal-success">Connected chain: Development</div>
+          <div>$ python scripts/call.py --action is_member</div>
+          <div className="terminal-success">Decoded value: {"{'Ok': True}"}</div>
+        </div>
+      </section>
+
+      <section id="visualization" className="home-section reveal-section">
+        <div className="section-copy">
+          <span className="section-label">On-chain context</span>
+          <h2>State and events are visible as product data.</h2>
+          <p>
+            Phase 3 adds account, contract, state, and event timeline cards so a hackathon demo can explain what
+            happened on-chain without scrolling raw logs.
+          </p>
+        </div>
+        <div className="metric-grid">
+          <article>
+            <strong>4</strong>
+            <span>completed phases</span>
+          </article>
+          <article>
+            <strong>10</strong>
+            <span>MVP node templates</span>
+          </article>
+          <article>
+            <strong>1</strong>
+            <span>executable Membership flow</span>
+          </article>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<PortalFlowNode>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [selectedNodeId, setSelectedNodeId] = useState(initialNodes[0].id);
@@ -458,6 +598,9 @@ function App() {
           <h1>Membership Flow Board</h1>
         </div>
         <div className="topbar__actions">
+          <button className="text-button quiet" title="Back to homepage" onClick={onOpenHome}>
+            Home
+          </button>
           <span className="health-pill">
             <CheckCircle2 size={16} />
             {health?.rpcReachable ? "RPC online" : "RPC offline"}
@@ -679,6 +822,16 @@ function App() {
       </section>
     </main>
   );
+}
+
+function App() {
+  const [page, setPage] = useState<Page>("home");
+
+  if (page === "workbench") {
+    return <WorkbenchPage onOpenHome={() => setPage("home")} />;
+  }
+
+  return <HomePage onOpenWorkbench={() => setPage("workbench")} />;
 }
 
 export default App;
