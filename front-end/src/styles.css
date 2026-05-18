@@ -737,10 +737,10 @@ h1 {
 
 .board-toolbar {
   display: flex;
-  min-height: 66px;
+  min-height: 58px;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
   border-bottom: 1px solid rgba(76, 141, 221, 0.18);
   background:
     linear-gradient(90deg, rgba(26, 79, 143, 0.42), rgba(8, 21, 38, 0.22)),
@@ -785,7 +785,7 @@ h1 {
   color: #8cebd8;
 }
 
-.board-toolbar__actions {
+.canvas-action-dock__actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -832,6 +832,49 @@ h1 {
   position: relative;
   flex: 1;
   min-height: 0;
+}
+
+.canvas-action-dock {
+  position: absolute;
+  z-index: 8;
+  right: 18px;
+  bottom: 18px;
+  left: 18px;
+  display: flex;
+  max-width: 760px;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 auto;
+  border: 1px solid rgba(90, 164, 255, 0.32);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(10, 31, 57, 0.92), rgba(4, 14, 26, 0.94)),
+    rgba(5, 15, 28, 0.92);
+  box-shadow: 0 18px 58px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(210, 236, 255, 0.08);
+  padding: 10px 12px;
+  backdrop-filter: blur(16px);
+}
+
+.canvas-action-dock__meta {
+  min-width: 132px;
+}
+
+.canvas-action-dock__meta span {
+  display: block;
+  color: #7f9abb;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.canvas-action-dock__meta strong {
+  display: block;
+  margin-top: 3px;
+  color: #e6f3ff;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .react-flow {

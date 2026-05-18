@@ -954,28 +954,6 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
                 {selectedNodeIds.length} selected
               </span>
             </div>
-            <div className="board-toolbar__actions">
-              <button className="canvas-action" title="Run selected nodes in flow order" onClick={runSelectedNodes}>
-                <Play size={14} />
-                Run selection
-              </button>
-              <button className="canvas-action" title="Duplicate selected nodes" onClick={duplicateSelectedNodes}>
-                <Copy size={14} />
-                Duplicate
-              </button>
-              <button
-                className="canvas-action danger"
-                title="Delete selected nodes"
-                onClick={deleteSelectedNodes}
-                disabled={selectedNodeIds.length === 0}
-              >
-                <Trash2 size={14} />
-                Delete
-              </button>
-              <button className="canvas-action quiet" title="Clear current selection" onClick={clearBoardSelection}>
-                Clear
-              </button>
-            </div>
           </div>
           <div className="flow-canvas" onDragOver={allowBoardDrop} onDrop={dropTemplateOnBoard}>
             <ReactFlow
@@ -996,6 +974,34 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
             >
               <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
             </ReactFlow>
+            <div className="canvas-action-dock" role="dialog" aria-label="Visual board selection actions">
+              <div className="canvas-action-dock__meta">
+                <span>Selection ops</span>
+                <strong>{selectedNodeIds.length} selected</strong>
+              </div>
+              <div className="canvas-action-dock__actions">
+                <button className="canvas-action" title="Run selected nodes in flow order" onClick={runSelectedNodes}>
+                  <Play size={14} />
+                  Run selection
+                </button>
+                <button className="canvas-action" title="Duplicate selected nodes" onClick={duplicateSelectedNodes}>
+                  <Copy size={14} />
+                  Duplicate
+                </button>
+                <button
+                  className="canvas-action danger"
+                  title="Delete selected nodes"
+                  onClick={deleteSelectedNodes}
+                  disabled={selectedNodeIds.length === 0}
+                >
+                  <Trash2 size={14} />
+                  Delete
+                </button>
+                <button className="canvas-action quiet" title="Clear current selection" onClick={clearBoardSelection}>
+                  Clear
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
