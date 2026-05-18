@@ -419,6 +419,15 @@ Exit criteria:
 
 Goal: make the tool beginner-safe.
 
+Current implementation status:
+
+- [x] Add default local profile awareness for `ws://127.0.0.1:9944`.
+- [x] Hide advanced fields by default in the inspector.
+- [x] Add node-level validation and beginner guidance.
+- [x] Add warnings for non-local/mainnet-like endpoints.
+- [x] Add setup checklist inside the workbench.
+- [x] Add common error hints for local node, missing artifacts, stale contract address, balance/value, and dry-run gas issues.
+
 Tasks:
 
 - Add default local profile.

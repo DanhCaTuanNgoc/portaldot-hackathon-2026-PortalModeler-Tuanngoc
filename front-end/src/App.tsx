@@ -1,8 +1,6 @@
 import {
   Background,
   BackgroundVariant,
-  Controls,
-  MiniMap,
   ReactFlow,
   addEdge,
   useEdgesState,
@@ -11,6 +9,7 @@ import {
   type Edge,
   type Node,
   type NodeProps,
+  type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
@@ -19,6 +18,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Code2,
+  Copy,
   Database,
   Download,
   FileText,
@@ -35,10 +35,11 @@ import {
   Server,
   Settings2,
   Shield,
+  Trash2,
   UserRound,
   WalletCards,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
 import heroImage from "./assets/hero.png";
 
 type PortalNodeKind =
@@ -138,6 +139,14 @@ type ChainSnapshot = {
 };
 
 type Page = "home" | "workbench";
+
+type Guidance = {
+  level: "ready" | "warning" | "blocked";
+  title: string;
+  items: string[];
+};
+
+const advancedConfigKeys = new Set(["account", "metadataPath", "wasmPath", "eventName"]);
 
 const templates: Template[] = [
   {
@@ -279,6 +288,108 @@ const nodeTypes = { portal: PortalNode };
 
 function configEntries(config: PortalNodeConfig) {
   return Object.entries(config).filter(([, value]) => value !== undefined);
+}
+
+function orderedSelection(nodes: PortalFlowNode[], selectedIds: string[]) {
+  const selected = new Set(selectedIds);
+  return nodes
+    .filter((node) => selected.has(node.id))
+    .sort((a, b) => flowOrder.indexOf(a.data.kind) - flowOrder.indexOf(b.data.kind));
+}
+
+function isNumericString(value?: string) {
+  return Boolean(value && /^\d+$/.test(value));
+}
+
+function isLocalEndpoint(endpoint?: string) {
+  return Boolean(endpoint?.startsWith("ws://127.0.0.1") || endpoint?.startsWith("ws://localhost"));
+}
+
+function explainRunIssue(result: ApiRunResult) {
+  const text = [result.stdout, result.stderr, result.error].filter(Boolean).join("\n");
+  const hints: string[] = [];
+
+  if (/not reachable|ECONNREFUSED|Connection refused|offline/i.test(text)) {
+    hints.push("Local RPC is not reachable. Start the contracts node and keep it running on ws://127.0.0.1:9944.");
+  }
+  if (/No contract found|not found on chain/i.test(text)) {
+    hints.push("The contract address is stale for this --tmp chain. Run Deploy Membership again.");
+  }
+  if (/missing.*metadata|missing.*wasm|No .*artifact/i.test(text)) {
+    hints.push("Contract artifacts are missing. Build the contract before deploying.");
+  }
+  if (/already a member/i.test(text)) {
+    hints.push("The signer has already joined. You can continue to state reads.");
+  }
+  if (/dry-run gas unavailable|ContractsApi\.instantiate|Enum type mapping/i.test(text)) {
+    hints.push("Gas dry-run is unavailable for this runtime. The deploy script falls back to explicit gas flags.");
+  }
+  if (/insufficient|balance/i.test(text)) {
+    hints.push("Check the account balance and transferred value before running payable calls.");
+  }
+
+  return hints;
+}
+
+function nodeGuidance(
+  node: PortalFlowNode,
+  health: HealthState | null,
+  snapshot: ChainSnapshot | null,
+  endpoint = "ws://127.0.0.1:9944",
+): Guidance {
+  const items: string[] = [];
+  let level: Guidance["level"] = "ready";
+
+  if (!isLocalEndpoint(endpoint)) {
+    level = "warning";
+    items.push("This endpoint is not the default local profile. Avoid mainnet while learning or testing.");
+  }
+
+  if (node.data.kind !== "chainConnect" && health && !health.rpcReachable) {
+    level = "blocked";
+    items.push("RPC is offline. Run the local contracts node before executing this node.");
+  }
+
+  if (node.data.kind === "deployMembership") {
+    if (!health?.artifactsReady) {
+      level = "blocked";
+      items.push("Membership artifacts are missing. Build the contract first.");
+    }
+    if (!isNumericString(node.data.config.fee)) {
+      level = "blocked";
+      items.push("Join fee must be a base-unit integer.");
+    }
+  }
+
+  if (node.data.kind === "joinMembership") {
+    if (!health?.contractReachable) {
+      level = "blocked";
+      items.push("No live contract is reachable on this chain. Deploy first.");
+    }
+    if (!isNumericString(node.data.config.value)) {
+      level = "blocked";
+      items.push("Join value must be a base-unit integer.");
+    }
+    if (snapshot?.state.isMember) {
+      level = "warning";
+      items.push("Signer is already a member. The runner will skip join() to avoid an expected assertion.");
+    }
+  }
+
+  if (["checkIsMember", "readJoinedAt", "eventViewer"].includes(node.data.kind) && health && !health.contractReachable) {
+    level = "blocked";
+    items.push("State and events need a live contract address. Deploy Membership first.");
+  }
+
+  if (items.length === 0) {
+    items.push("This node is ready with the local beginner-safe defaults.");
+  }
+
+  return {
+    level,
+    title: level === "blocked" ? "Action needed" : level === "warning" ? "Check before running" : "Ready to run",
+    items,
+  };
 }
 
 function useRevealOnScroll() {
@@ -431,9 +542,24 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   ]);
   const [health, setHealth] = useState<HealthState | null>(null);
   const [snapshot, setSnapshot] = useState<ChainSnapshot | null>(null);
+  const [beginnerMode, setBeginnerMode] = useState(true);
+  const [showAdvancedFields, setShowAdvancedFields] = useState(false);
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<PortalFlowNode, Edge> | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([initialNodes[0].id]);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) || nodes[0];
+  const selectedNodes = useMemo(
+    () => orderedSelection(nodes, selectedNodeIds),
+    [nodes, selectedNodeIds],
+  );
   const endpoint = nodes.find((node) => node.data.kind === "chainConnect")?.data.config.endpoint;
+  const guidance = nodeGuidance(selectedNode, health, snapshot, endpoint);
+  const setupChecklist = [
+    { label: "Local RPC online", done: Boolean(health?.rpcReachable) },
+    { label: "Contract artifacts ready", done: Boolean(health?.artifactsReady) },
+    { label: "Live contract reachable", done: Boolean(health?.contractReachable) },
+    { label: "Membership state readable", done: snapshot?.state.isMember !== null && snapshot?.state.isMember !== undefined },
+  ];
 
   const orderedNodes = useMemo(() => {
     return [...nodes].sort((a, b) => flowOrder.indexOf(a.data.kind) - flowOrder.indexOf(b.data.kind));
@@ -496,14 +622,14 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     setRunLogs((current) => [{ id: `${Date.now()}-${current.length}`, ...log }, ...current].slice(0, 18));
   }
 
-  function addTemplate(template: Template) {
+  function addTemplate(template: Template, position?: { x: number; y: number }) {
     const id = `${template.kind}-${Date.now()}`;
     setNodes((current) => [
       ...current,
       {
         id,
         type: "portal",
-        position: { x: 160 + current.length * 18, y: 120 + current.length * 12 },
+        position: position || { x: 160 + current.length * 18, y: 120 + current.length * 12 },
         data: {
           kind: template.kind,
           label: template.label,
@@ -515,6 +641,102 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       },
     ]);
     setSelectedNodeId(id);
+    setSelectedNodeIds([id]);
+  }
+
+  function startPaletteDrag(event: DragEvent<HTMLButtonElement>, template: Template) {
+    event.dataTransfer.setData("application/portal-template", template.kind);
+    event.dataTransfer.effectAllowed = "copy";
+  }
+
+  function allowBoardDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function dropTemplateOnBoard(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const templateKind = event.dataTransfer.getData("application/portal-template") as PortalNodeKind;
+    const template = templates.find((item) => item.kind === templateKind);
+
+    if (!template) {
+      return;
+    }
+
+    const position = flowInstance?.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    addTemplate(template, position);
+  }
+
+  function selectNodes(selection: PortalFlowNode[]) {
+    const ids = selection.map((node) => node.id);
+    setSelectedNodeIds(ids);
+
+    if (selection.length > 0) {
+      setSelectedNodeId(selection[selection.length - 1].id);
+    }
+  }
+
+  function clearBoardSelection() {
+    setSelectedNodeIds([]);
+    setNodes((current) => current.map((node) => ({ ...node, selected: false })));
+  }
+
+  function deleteSelectedNodes() {
+    if (selectedNodeIds.length === 0) {
+      return;
+    }
+
+    if (selectedNodeIds.length >= nodes.length) {
+      pushLog({
+        level: "warning",
+        title: "Delete blocked",
+        body: "Keep at least one node on the board so the inspector and runner stay anchored.",
+      });
+      return;
+    }
+
+    const selected = new Set(selectedNodeIds);
+    const remainingNodes = nodes.filter((node) => !selected.has(node.id));
+    const nextSelectedId = remainingNodes[0]?.id || initialNodes[0].id;
+
+    setNodes(remainingNodes.map((node) => ({ ...node, selected: node.id === nextSelectedId })));
+    setEdges((current) => current.filter((edge) => !selected.has(edge.source) && !selected.has(edge.target)));
+    setSelectedNodeId(nextSelectedId);
+    setSelectedNodeIds([nextSelectedId]);
+    pushLog({
+      level: "info",
+      title: "Nodes deleted",
+      body: `${selected.size} selected node${selected.size === 1 ? "" : "s"} removed from the visual board.`,
+    });
+  }
+
+  function duplicateSelectedNodes() {
+    const sourceNodes = selectedNodes.length > 0 ? selectedNodes : [selectedNode];
+    const timestamp = Date.now();
+    const duplicates = sourceNodes.map((node, index) => ({
+      ...node,
+      id: `${node.data.kind}-${timestamp}-${index}`,
+      selected: true,
+      position: { x: node.position.x + 42, y: node.position.y + 42 },
+      data: {
+        ...node.data,
+        status: "ready" as const,
+        config: { ...node.data.config },
+      },
+    }));
+
+    const duplicateIds = duplicates.map((node) => node.id);
+    setNodes((current) => [
+      ...current.map((node) => ({ ...node, selected: false })),
+      ...duplicates,
+    ]);
+    setSelectedNodeId(duplicateIds[duplicateIds.length - 1]);
+    setSelectedNodeIds(duplicateIds);
+    pushLog({
+      level: "info",
+      title: "Nodes duplicated",
+      body: `${duplicateIds.length} node${duplicateIds.length === 1 ? "" : "s"} duplicated without copying edges.`,
+    });
   }
 
   function updateConfig(key: keyof PortalNodeConfig, value: string) {
@@ -556,7 +778,16 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       pushLog({
         level: ok ? "success" : "error",
         title: `${node.data.label} ${ok ? "completed" : "failed"}`,
-        body: [result.command, result.stdout, result.stderr, result.error].filter(Boolean).join("\n").trim(),
+        body: [
+          result.command,
+          result.stdout,
+          result.stderr,
+          result.error,
+          ...explainRunIssue(result).map((hint) => `Hint: ${hint}`),
+        ]
+          .filter(Boolean)
+          .join("\n")
+          .trim(),
       });
       await refreshHealth();
       await refreshSnapshot();
@@ -576,6 +807,22 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     await runNode(selectedNode);
   }
 
+  async function runSelectedNodes() {
+    const batch = selectedNodes.length > 0 ? selectedNodes : [selectedNode];
+
+    for (const node of batch) {
+      const ok = await runNode(node);
+      if (!ok) {
+        pushLog({
+          level: "warning",
+          title: "Selection run stopped",
+          body: `${node.data.label} returned an error. Fix that node before continuing the selected batch.`,
+        });
+        break;
+      }
+    }
+  }
+
   async function runFlow() {
     for (const node of orderedNodes) {
       const ok = await runNode(node);
@@ -590,18 +837,38 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     }
   }
 
+  useEffect(() => {
+    function handleBoardHotkeys(event: KeyboardEvent) {
+      if (event.target instanceof HTMLInputElement) {
+        return;
+      }
+
+      if ((event.key === "Delete" || event.key === "Backspace") && selectedNodeIds.length > 0) {
+        event.preventDefault();
+        deleteSelectedNodes();
+      }
+    }
+
+    window.addEventListener("keydown", handleBoardHotkeys);
+    return () => window.removeEventListener("keydown", handleBoardHotkeys);
+  });
+
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
-          <div className="eyebrow">PortalModeler</div>
+        <div className="topbar__title">
+          <div className="eyebrow">PortalModeler Workbench</div>
           <h1>Membership Flow Board</h1>
+          <p>Model, execute, and inspect a local ink! membership workflow from one dev-focused surface.</p>
         </div>
         <div className="topbar__actions">
           <button className="text-button quiet" title="Back to homepage" onClick={onOpenHome}>
             Home
           </button>
-          <span className="health-pill">
+          <button className={`text-button quiet ${beginnerMode ? "active-mode" : ""}`} onClick={() => setBeginnerMode((value) => !value)}>
+            Beginner mode
+          </button>
+          <span className={`health-pill ${health?.rpcReachable ? "online" : "offline"}`}>
             <CheckCircle2 size={16} />
             {health?.rpcReachable ? "RPC online" : "RPC offline"}
           </span>
@@ -622,17 +889,48 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
         </div>
       </header>
 
+      <section className="workflow-strip" aria-label="Membership workflow readiness">
+        {[
+          ["RPC endpoint", health?.rpcReachable ? "online" : "offline", health?.rpcReachable ? "ready" : "blocked"],
+          ["Artifacts", health?.artifactsReady ? "ready" : "missing", health?.artifactsReady ? "ready" : "blocked"],
+          [
+            "Contract",
+            health?.contractReachable ? "live" : health?.contractAddress ? "stale" : "pending",
+            health?.contractReachable ? "ready" : health?.contractAddress ? "warning" : "idle",
+          ],
+          [
+            "Membership",
+            snapshot?.state.isMember ? "joined" : snapshot?.state.isMember === false ? "not joined" : "unknown",
+            snapshot?.state.isMember ? "ready" : "idle",
+          ],
+        ].map(([label, value, tone]) => (
+          <div key={label} className={`workflow-chip ${tone}`}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </section>
+
       <section className="workspace">
         <aside className="palette-panel" aria-label="Node palette">
-          <div className="panel-heading">
-            <Boxes size={18} />
-            <span>Palette</span>
+          <div className="panel-heading panel-heading--split">
+            <span className="panel-heading__label">
+              <Boxes size={18} />
+              Palette
+            </span>
+            <span className="panel-count">{templates.length} nodes</span>
           </div>
           <div className="palette-list">
             {templates.map((template) => {
               const Icon = template.icon;
               return (
-                <button key={template.kind} className="palette-item" onClick={() => addTemplate(template)}>
+                <button
+                  key={template.kind}
+                  className="palette-item"
+                  draggable
+                  onClick={() => addTemplate(template)}
+                  onDragStart={(event) => startPaletteDrag(event, template)}
+                >
                   <Icon size={17} />
                   <span>{template.label}</span>
                   <Plus size={15} />
@@ -643,43 +941,106 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
         </aside>
 
         <section className="board-panel" aria-label="Visual node board">
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onConnect={onConnect}
-            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-            fitView
-          >
-            <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
-            <MiniMap pannable zoomable nodeColor="#254f85" maskColor="rgba(4, 8, 14, 0.72)" />
-            <Controls />
-          </ReactFlow>
+          <div className="board-toolbar">
+            <div>
+              <span>Flow Canvas</span>
+              <strong>Membership local workflow</strong>
+            </div>
+            <div className="board-toolbar__meta">
+              <span>{nodes.length} nodes</span>
+              <span>{edges.length} edges</span>
+              <span>{beginnerMode ? "guided" : "expert"}</span>
+              <span className={selectedNodeIds.length > 0 ? "selection-active" : ""}>
+                {selectedNodeIds.length} selected
+              </span>
+            </div>
+            <div className="board-toolbar__actions">
+              <button className="canvas-action" title="Run selected nodes in flow order" onClick={runSelectedNodes}>
+                <Play size={14} />
+                Run selection
+              </button>
+              <button className="canvas-action" title="Duplicate selected nodes" onClick={duplicateSelectedNodes}>
+                <Copy size={14} />
+                Duplicate
+              </button>
+              <button
+                className="canvas-action danger"
+                title="Delete selected nodes"
+                onClick={deleteSelectedNodes}
+                disabled={selectedNodeIds.length === 0}
+              >
+                <Trash2 size={14} />
+                Delete
+              </button>
+              <button className="canvas-action quiet" title="Clear current selection" onClick={clearBoardSelection}>
+                Clear
+              </button>
+            </div>
+          </div>
+          <div className="flow-canvas" onDragOver={allowBoardDrop} onDrop={dropTemplateOnBoard}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onConnect={onConnect}
+              onInit={setFlowInstance}
+              onNodeClick={(_, node) => {
+                setSelectedNodeId(node.id);
+                setSelectedNodeIds([node.id]);
+              }}
+              onSelectionChange={({ nodes: selection }) => selectNodes(selection as PortalFlowNode[])}
+              selectionOnDrag
+              fitView
+            >
+              <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
+            </ReactFlow>
+          </div>
         </section>
 
         <aside className="inspector-panel" aria-label="Node inspector">
-          <div className="panel-heading">
-            <Settings2 size={18} />
-            <span>Inspector</span>
+          <div className="panel-heading panel-heading--split">
+            <span className="panel-heading__label">
+              <Settings2 size={18} />
+              Inspector
+            </span>
+            <span className={`panel-status ${selectedNode.data.status}`}>{selectedNode.data.status}</span>
           </div>
 
           <div className="inspector-card">
             <div className="inspector-title">{selectedNode.data.label}</div>
             <div className="inspector-description">{selectedNode.data.description}</div>
             <div className="field-stack">
-              {configEntries(selectedNode.data.config).map(([key, value]) => (
-                <label key={key} className="field">
-                  <span>{key}</span>
-                  <input value={String(value)} onChange={(event) => updateConfig(key as keyof PortalNodeConfig, event.target.value)} />
-                </label>
-              ))}
+              {configEntries(selectedNode.data.config)
+                .filter(([key]) => showAdvancedFields || !advancedConfigKeys.has(key))
+                .map(([key, value]) => (
+                  <label key={key} className="field">
+                    <span>{key}</span>
+                    <input value={String(value)} onChange={(event) => updateConfig(key as keyof PortalNodeConfig, event.target.value)} />
+                  </label>
+                ))}
               {configEntries(selectedNode.data.config).length === 0 ? (
                 <div className="empty-note">This node has no editable fields.</div>
               ) : null}
+              {configEntries(selectedNode.data.config).some(([key]) => advancedConfigKeys.has(key)) ? (
+                <button className="advanced-toggle" onClick={() => setShowAdvancedFields((value) => !value)}>
+                  {showAdvancedFields ? "Hide advanced fields" : "Show advanced fields"}
+                </button>
+              ) : null}
             </div>
           </div>
+
+          {beginnerMode ? (
+            <div className={`guidance-card ${guidance.level}`}>
+              <div className="guidance-title">{guidance.title}</div>
+              <ul>
+                {guidance.items.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
 
           <div className="panel-heading small">
             <Code2 size={17} />
@@ -705,6 +1066,21 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
                 : "not deployed"}
             </strong>
           </div>
+
+          {beginnerMode ? (
+            <div className="setup-checklist">
+              <div className="panel-heading small">
+                <ClipboardList size={17} />
+                <span>Setup Checklist</span>
+              </div>
+              {setupChecklist.map((item) => (
+                <div key={item.label} className={`setup-check ${item.done ? "done" : ""}`}>
+                  <CheckCircle2 size={15} />
+                  <span>{item.label}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </aside>
       </section>
 

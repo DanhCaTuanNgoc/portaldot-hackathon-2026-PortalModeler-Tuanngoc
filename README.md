@@ -221,3 +221,14 @@ It renders:
 - an event timeline for `Instantiated`, `MemberJoined`, and metadata-declared events
 
 Because the local contracts node runs with `--tmp`, the UI detects when `contract-address.txt` points to a contract that is no longer present on the current chain and marks it as stale instead of treating the address as valid.
+
+## Phase 4: guided beginner mode
+
+The workbench now includes a beginner-safe guidance layer:
+
+- a local profile expectation for `ws://127.0.0.1:9944`
+- advanced inspector fields hidden by default
+- node-level validation before common actions
+- warnings for non-local endpoints
+- a setup checklist in the inspector
+- hints for common errors such as offline RPC, missing artifacts, stale contract addresses, low balance/value issues, and unavailable dry-run gas
