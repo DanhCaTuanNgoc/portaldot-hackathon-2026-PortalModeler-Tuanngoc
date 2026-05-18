@@ -342,6 +342,18 @@ Exit criteria:
 
 Goal: make the visual flow interact with existing local scripts.
 
+Current implementation status:
+
+- [x] Add a safe execution layer for query/deploy/call.
+- [x] Connect `Balance Query` to `scripts/query.py`.
+- [x] Connect `Deploy Membership` to `scripts/deploy.py`.
+- [x] Connect action nodes to `scripts/call.py`.
+- [x] Show status per node: idle, running, success, warning, error.
+- [x] Show logs under the board.
+- [x] Add local node health check.
+- [x] Read `contract-address.txt` after deploy.
+- [x] Make deploy/join safe to re-run against an existing local state.
+
 Tasks:
 
 - Add a safe execution layer for query/deploy/call.
@@ -367,6 +379,15 @@ Exit criteria:
 ## Phase 3: State and Event Visualization
 
 Goal: make on-chain result easy to understand.
+
+Current implementation status:
+
+- [x] Add account card with address, balance, token, and nonce.
+- [x] Add contract card with contract address, metadata path, wasm path, and available messages.
+- [x] Add state cards for `is_member` and `joined_at`.
+- [x] Add event timeline for `Instantiated`, `MemberJoined`, and metadata-declared events.
+- [x] Detect stale `contract-address.txt` when a `--tmp` chain has reset.
+- [x] Refresh state/event snapshot after node execution.
 
 Tasks:
 

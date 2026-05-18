@@ -18,11 +18,14 @@ import {
   CheckCircle2,
   ClipboardList,
   Code2,
+  Database,
   Download,
+  FileText,
   FileCode2,
   GitBranch,
   HardDrive,
   Link2,
+  Loader2,
   Play,
   Plus,
   RadioTower,
@@ -34,7 +37,7 @@ import {
   UserRound,
   WalletCards,
 } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type PortalNodeKind =
   | "chainConnect"
@@ -65,7 +68,7 @@ type PortalNodeData = {
   label: string;
   description: string;
   command: string;
-  status: "ready" | "success" | "warning";
+  status: "ready" | "running" | "success" | "warning" | "error";
   config: PortalNodeConfig;
 } & Record<string, unknown>;
 
@@ -78,6 +81,58 @@ type Template = {
   command: string;
   config: PortalNodeConfig;
   icon: typeof Server;
+};
+
+type RunLog = {
+  id: string;
+  level: "info" | "success" | "warning" | "error";
+  title: string;
+  body: string;
+};
+
+type ApiRunResult = {
+  ok?: boolean;
+  command?: string;
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+  code?: number | null;
+};
+
+type HealthState = {
+  ok: boolean;
+  rpcReachable: boolean;
+  contractReachable: boolean;
+  artifactsReady: boolean;
+  contractAddress: string;
+};
+
+type SnapshotEvent = {
+  name: string;
+  status: "observed" | "waiting" | "decoded" | "expected";
+  detail: string;
+};
+
+type ChainSnapshot = {
+  ok: boolean;
+  account: {
+    account: string;
+    token: string;
+    freeBalance: string;
+    nonce: string;
+  };
+  contract: {
+    address: string;
+    reachable: boolean;
+    metadataPath: string;
+    wasmPath: string;
+    messages: string[];
+  };
+  state: {
+    isMember: boolean | null;
+    joinedAt: string;
+  };
+  events: SnapshotEvent[];
 };
 
 const templates: Template[] = [
@@ -205,7 +260,7 @@ function PortalNode({ data, selected }: NodeProps<PortalFlowNode>) {
     <div className={`portal-node ${selected ? "selected" : ""}`}>
       <div className="portal-node__top">
         <span className={`portal-node__icon ${data.status}`}>
-          <Icon size={18} />
+          {data.status === "running" ? <Loader2 className="spin" size={18} /> : <Icon size={18} />}
         </span>
         <span className={`portal-node__status ${data.status}`}>{data.status}</span>
       </div>
@@ -226,6 +281,16 @@ function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<PortalFlowNode>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [selectedNodeId, setSelectedNodeId] = useState(initialNodes[0].id);
+  const [runLogs, setRunLogs] = useState<RunLog[]>([
+    {
+      id: "phase2-ready",
+      level: "info",
+      title: "Phase 2 runner ready",
+      body: "Only whitelisted PortalModeler nodes can call local scripts through the Vite middleware.",
+    },
+  ]);
+  const [health, setHealth] = useState<HealthState | null>(null);
+  const [snapshot, setSnapshot] = useState<ChainSnapshot | null>(null);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) || nodes[0];
   const endpoint = nodes.find((node) => node.data.kind === "chainConnect")?.data.config.endpoint;
@@ -263,6 +328,34 @@ function App() {
     [setEdges],
   );
 
+  const refreshHealth = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/health?endpoint=${encodeURIComponent(endpoint || "ws://127.0.0.1:9944")}`);
+      const nextHealth = (await response.json()) as HealthState;
+      setHealth(nextHealth);
+    } catch {
+      setHealth({ ok: false, rpcReachable: false, contractReachable: false, artifactsReady: false, contractAddress: "" });
+    }
+  }, [endpoint]);
+
+  const refreshSnapshot = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/snapshot?endpoint=${encodeURIComponent(endpoint || "ws://127.0.0.1:9944")}`);
+      setSnapshot((await response.json()) as ChainSnapshot);
+    } catch {
+      setSnapshot(null);
+    }
+  }, [endpoint]);
+
+  useEffect(() => {
+    void refreshHealth();
+    void refreshSnapshot();
+  }, [refreshHealth, refreshSnapshot]);
+
+  function pushLog(log: Omit<RunLog, "id">) {
+    setRunLogs((current) => [{ id: `${Date.now()}-${current.length}`, ...log }, ...current].slice(0, 18));
+  }
+
   function addTemplate(template: Template) {
     const id = `${template.kind}-${Date.now()}`;
     setNodes((current) => [
@@ -294,12 +387,67 @@ function App() {
     );
   }
 
-  function markSelectedSuccess() {
+  function setNodeStatus(nodeId: string, status: PortalNodeData["status"]) {
     setNodes((current) =>
-      current.map((node) =>
-        node.id === selectedNode.id ? { ...node, data: { ...node.data, status: "success" } } : node,
-      ),
+      current.map((node) => (node.id === nodeId ? { ...node, data: { ...node.data, status } } : node)),
     );
+  }
+
+  async function runNode(node: PortalFlowNode) {
+    setNodeStatus(node.id, "running");
+    pushLog({
+      level: "info",
+      title: `Running ${node.data.label}`,
+      body: hydrateCommand(node.data.command, node.data.config, endpoint),
+    });
+
+    try {
+      const response = await fetch("/api/run-node", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: node.data.kind,
+          config: { ...node.data.config, endpoint },
+        }),
+      });
+      const result = (await response.json()) as ApiRunResult;
+      const ok = response.ok && result.ok;
+      setNodeStatus(node.id, ok ? "success" : "error");
+      pushLog({
+        level: ok ? "success" : "error",
+        title: `${node.data.label} ${ok ? "completed" : "failed"}`,
+        body: [result.command, result.stdout, result.stderr, result.error].filter(Boolean).join("\n").trim(),
+      });
+      await refreshHealth();
+      await refreshSnapshot();
+      return ok;
+    } catch (error) {
+      setNodeStatus(node.id, "error");
+      pushLog({
+        level: "error",
+        title: `${node.data.label} failed`,
+        body: error instanceof Error ? error.message : String(error),
+      });
+      return false;
+    }
+  }
+
+  async function runSelectedNode() {
+    await runNode(selectedNode);
+  }
+
+  async function runFlow() {
+    for (const node of orderedNodes) {
+      const ok = await runNode(node);
+      if (!ok) {
+        pushLog({
+          level: "warning",
+          title: "Flow stopped",
+          body: `${node.data.label} returned an error. Fix that node before continuing.`,
+        });
+        break;
+      }
+    }
   }
 
   return (
@@ -312,10 +460,18 @@ function App() {
         <div className="topbar__actions">
           <span className="health-pill">
             <CheckCircle2 size={16} />
-            Phase 0 ready
+            {health?.rpcReachable ? "RPC online" : "RPC offline"}
           </span>
-          <button className="icon-button" title="Mark selected node as success" onClick={markSelectedSuccess}>
+          <button className="text-button" title="Run selected node" onClick={runSelectedNode}>
             <Play size={17} />
+            Run node
+          </button>
+          <button className="text-button" title="Run nodes in flow order" onClick={runFlow}>
+            <GitBranch size={17} />
+            Run flow
+          </button>
+          <button className="icon-button" title="Refresh local health" onClick={refreshHealth}>
+            <CheckCircle2 size={17} />
           </button>
           <button className="icon-button" title="Export graph JSON">
             <Save size={17} />
@@ -387,7 +543,101 @@ function App() {
             <span>Command</span>
           </div>
           <pre className="command-preview">{hydrateCommand(selectedNode.data.command, selectedNode.data.config, endpoint)}</pre>
+
+          <div className="panel-heading small">
+            <Server size={17} />
+            <span>Local Health</span>
+          </div>
+          <div className="health-grid">
+            <span>RPC</span>
+            <strong>{health?.rpcReachable ? "online" : "offline"}</strong>
+            <span>Artifacts</span>
+            <strong>{health?.artifactsReady ? "ready" : "missing"}</strong>
+            <span>Contract</span>
+            <strong>
+              {health?.contractAddress
+                ? health.contractReachable
+                  ? health.contractAddress
+                  : `${health.contractAddress} (stale)`
+                : "not deployed"}
+            </strong>
+          </div>
         </aside>
+      </section>
+
+      <section className="snapshot-panel" aria-label="State and event visualization">
+        <article className="snapshot-card account-card">
+          <div className="panel-heading">
+            <WalletCards size={18} />
+            <span>Account</span>
+          </div>
+          <dl className="snapshot-list">
+            <dt>Address</dt>
+            <dd>{snapshot?.account.account || "unknown"}</dd>
+            <dt>Balance</dt>
+            <dd>{snapshot?.account.freeBalance || "not loaded"}</dd>
+            <dt>Nonce</dt>
+            <dd>{snapshot?.account.nonce || "0"}</dd>
+          </dl>
+        </article>
+
+        <article className="snapshot-card contract-card">
+          <div className="panel-heading">
+            <Database size={18} />
+            <span>Contract</span>
+          </div>
+          <dl className="snapshot-list">
+            <dt>Address</dt>
+            <dd>
+              {snapshot?.contract.address
+                ? snapshot.contract.reachable
+                  ? snapshot.contract.address
+                  : `${snapshot.contract.address} (not on current chain)`
+                : "not deployed"}
+            </dd>
+            <dt>Metadata</dt>
+            <dd>{snapshot?.contract.metadataPath || "missing"}</dd>
+            <dt>Messages</dt>
+            <dd>{snapshot?.contract.messages.join(", ") || "not loaded"}</dd>
+          </dl>
+        </article>
+
+        <article className="snapshot-card state-card">
+          <div className="panel-heading">
+            <SearchCheck size={18} />
+            <span>State</span>
+          </div>
+          <div className="state-grid">
+            <div>
+              <span>is_member</span>
+              <strong className={snapshot?.state.isMember ? "state-good" : "state-wait"}>
+                {snapshot?.state.isMember === null || snapshot?.state.isMember === undefined
+                  ? "unknown"
+                  : String(snapshot.state.isMember)}
+              </strong>
+            </div>
+            <div>
+              <span>joined_at</span>
+              <strong>{snapshot?.state.joinedAt || "not joined"}</strong>
+            </div>
+          </div>
+        </article>
+
+        <article className="snapshot-card timeline-card">
+          <div className="panel-heading">
+            <RadioTower size={18} />
+            <span>Event Timeline</span>
+          </div>
+          <div className="timeline-list">
+            {(snapshot?.events || []).map((event, index) => (
+              <div key={`${event.name}-${index}`} className={`timeline-item ${event.status}`}>
+                <span>{event.status}</span>
+                <strong>{event.name}</strong>
+                <p>{event.detail}</p>
+              </div>
+            ))}
+          </div>
+        </article>
       </section>
 
       <section className="bottom-panel">
@@ -411,6 +661,20 @@ function App() {
             <span>Markdown Export</span>
           </div>
           <pre>{markdownExport}</pre>
+        </div>
+        <div className="export-pane logs-pane">
+          <div className="panel-heading">
+            <FileText size={18} />
+            <span>Run Logs</span>
+          </div>
+          <div className="run-log-list">
+            {runLogs.map((log) => (
+              <article key={log.id} className={`run-log ${log.level}`}>
+                <div>{log.title}</div>
+                <pre>{log.body}</pre>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
     </main>

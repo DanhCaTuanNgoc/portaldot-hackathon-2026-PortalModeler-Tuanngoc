@@ -190,3 +190,34 @@ cd front-end
 npm install
 npm run dev
 ```
+
+## Phase 2: script-aware execution
+
+The Vite dev server now exposes a small local-only runner for the board:
+
+- `GET /api/health`
+- `POST /api/run-node`
+
+The runner is deliberately whitelist-based. It maps known node kinds to the repo scripts instead of accepting arbitrary shell commands:
+
+- `Balance Query` -> `python scripts/query.py`
+- `Deploy Membership` -> `python scripts/deploy.py`
+- `Join Membership` / state reads -> `python scripts/call.py`
+- `Artifact Select` -> local artifact existence check
+
+The board can run a selected node, run the flow in order, show node status, refresh local health, and display script logs. Existing deployments are reused via `contract-address.txt`, and `join()` is skipped when the signer is already a member.
+
+## Phase 3: state and event visualization
+
+The board now reads a local chain snapshot through:
+
+- `GET /api/snapshot`
+
+It renders:
+
+- account address, balance, token, and nonce
+- contract address, artifact paths, and available messages
+- `is_member` and `joined_at` state cards
+- an event timeline for `Instantiated`, `MemberJoined`, and metadata-declared events
+
+Because the local contracts node runs with `--tmp`, the UI detects when `contract-address.txt` points to a contract that is no longer present on the current chain and marks it as stale instead of treating the address as valid.

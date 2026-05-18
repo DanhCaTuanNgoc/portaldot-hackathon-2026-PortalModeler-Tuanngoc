@@ -10,6 +10,8 @@ front-end/dist/
 *.json
 !model/membership.json
 !scripts/*.json
+!front-end/package.json
+!front-end/package-lock.json
 !.gitignore
 __pycache__/
 .env
