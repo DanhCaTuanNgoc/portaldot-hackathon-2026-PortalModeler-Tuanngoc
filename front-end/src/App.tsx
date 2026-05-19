@@ -40,7 +40,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
-import heroImage from "./assets/hero.png";
+import portalLogo from "./assets/logo_portalmodeler.png";
 
 type PortalNodeKind =
   | "chainConnect"
@@ -145,6 +145,83 @@ type Guidance = {
   title: string;
   items: string[];
 };
+
+const futurePlanItems = [
+  ["Model import", "Load BPMN-style specs and generate PortalModeler graphs with safe script bindings."],
+  ["Smart validation", "Preflight every node against artifacts, chain metadata, account balance, and contract ABI."],
+  ["Team demos", "Share replayable workflow snapshots with logs, state cards, and timeline evidence."],
+];
+
+const testimonialItems = [
+  [
+    "PortalModeler makes the demo path obvious. Reviewers can see the contract flow, state checks, and execution logs without switching tools.",
+    "Mina Tran",
+    "Web3 builder",
+  ],
+  [
+    "The whitelist runner is exactly the right boundary for a hackathon app: visual enough for product, constrained enough for local scripts.",
+    "Avery Chen",
+    "Protocol engineer",
+  ],
+  [
+    "I like that it turns contract deployment into a board. The steps are visible, repeatable, and easy to explain to non-runtime people.",
+    "Jon Bell",
+    "Developer advocate",
+  ],
+  [
+    "The state timeline is the strongest part. It gives the UI a product story instead of being another terminal wrapper.",
+    "Sara Nguyen",
+    "Product reviewer",
+  ],
+];
+
+const faqItems = [
+  [
+    "Is PortalModeler only a landing page?",
+    "No. The landing page introduces the product, while the workbench is the actual visual board for running the local Membership contract flow.",
+  ],
+  [
+    "Can the browser run arbitrary scripts?",
+    "No. Execution goes through a whitelist in the Vite middleware so only known PortalModeler workflow nodes can call local scripts.",
+  ],
+  [
+    "What chain does the MVP target?",
+    "The MVP targets a local Portaldot/Substrate-style development node over ws://127.0.0.1:9944.",
+  ],
+  [
+    "What is next after the hackathon MVP?",
+    "The next plan is importable models, deeper validation, reusable run snapshots, and richer contract/state visualizations.",
+  ],
+];
+
+const footerColumns = [
+  {
+    title: "Product",
+    links: [
+      ["Workflow", "#workflow"],
+      ["Execution", "#execution"],
+      ["Visualization", "#visualization"],
+    ],
+  },
+  {
+    title: "Build",
+    links: [
+      ["Future plan", "#future-plan"],
+      ["FAQ", "#faq"],
+      ["Workbench", "#"],
+    ],
+  },
+  {
+    title: "Project",
+    links: [
+      ["Portaldot", "#workflow"],
+      ["ink! contracts", "#execution"],
+      ["Local demo", "#visualization"],
+    ],
+  },
+];
+
+const splineHeroUrl = "https://my.spline.design/3ddesigntextcopycopy-TZgCdtvnWqBX15ySbgH38cvT-v0c/";
 
 const advancedConfigKeys = new Set(["account", "metadataPath", "wasmPath", "eventName"]);
 
@@ -412,32 +489,54 @@ function useRevealOnScroll() {
   }, []);
 }
 
+function PortalModelerBrand({ compact = false }: { compact?: boolean }) {
+  return (
+    <div className={`brand-mark ${compact ? "brand-mark--compact" : ""}`} aria-label="PortalModeler">
+      <img className="brand-mark__symbol" src={portalLogo} alt="" aria-hidden="true" />
+      {!compact && (
+        <strong className="brand-mark__word">
+          Portal<span>Modeler</span>
+        </strong>
+      )}
+    </div>
+  );
+}
+
 function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
   useRevealOnScroll();
+  const [openFaqIndexes, setOpenFaqIndexes] = useState<number[]>([0]);
+
+  function toggleFaq(index: number) {
+    setOpenFaqIndexes((current) =>
+      current.includes(index) ? current.filter((item) => item !== index) : [...current, index],
+    );
+  }
 
   return (
     <main className="home-shell">
       <nav className="home-nav">
-        <div className="brand-mark">
-          <span>PM</span>
-          <strong>PortalModeler</strong>
-        </div>
+        <PortalModelerBrand />
         <div className="home-nav__links">
           <a href="#workflow">Workflow</a>
           <a href="#execution">Execution</a>
           <a href="#visualization">Visualization</a>
+          <a href="#future-plan">Future plan</a>
+          <a href="#faq">FAQ</a>
+        </div>
+        <div className="home-nav__actions">
           <button className="home-nav__button" onClick={onOpenWorkbench}>
-            Open app
+            Open workbench
           </button>
         </div>
       </nav>
 
       <section className="home-hero">
-        <img className="home-hero__asset" src={heroImage} alt="" loading="eager" />
-        <div className="home-hero__grid" aria-hidden="true" />
         <div className="home-hero__content">
-          <div className="hero-kicker">Model-driven contract workflows for Portaldot</div>
-          <h1>Build, run, and explain blockchain contract flows from a visual dev board.</h1>
+          <div className="hero-kicker">
+            <span />
+            Model-driven contract workflows
+          </div>
+          <h1>Visualize and execute Web3 contract flows.</h1>
           <p>
             PortalModeler turns Portaldot setup, contract deployment, calls, state reads, and event review into one
             executable visual model.
@@ -452,6 +551,16 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
             </a>
           </div>
         </div>
+        <div className="home-hero__visual">
+          <iframe
+            className="home-hero__spline"
+            src={splineHeroUrl}
+            title="PortalModeler 3D component"
+            loading="eager"
+            allow="autoplay; fullscreen; xr-spatial-tracking"
+            allowTransparency
+          />
+        </div>
         <div className="hero-status-strip">
           <span>Phase 0 ready</span>
           <span>Visual board</span>
@@ -461,7 +570,7 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
       </section>
 
       <section id="workflow" className="home-section reveal-section">
-        <div className="section-copy">
+        <div className="section-copy section-copy--center">
           <span className="section-label">Visual source of truth</span>
           <h2>One graph for the entire local contract path.</h2>
           <p>
@@ -483,7 +592,7 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
         </div>
       </section>
 
-      <section id="execution" className="home-section reveal-section">
+      <section id="execution" className="home-section home-section--split reveal-section">
         <div className="section-copy">
           <span className="section-label">Developer-safe execution</span>
           <h2>Run nodes without turning the browser into a shell.</h2>
@@ -500,8 +609,8 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
         </div>
       </section>
 
-      <section id="visualization" className="home-section reveal-section">
-        <div className="section-copy">
+      <section id="visualization" className="home-section home-section--stats reveal-section">
+        <div className="section-copy section-copy--center">
           <span className="section-label">On-chain context</span>
           <h2>State and events are visible as product data.</h2>
           <p>
@@ -524,6 +633,123 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
           </article>
         </div>
       </section>
+
+      <section className="home-testimonial reveal-section">
+        <div className="section-copy section-copy--center">
+          <span className="section-label">Testimonial</span>
+          <h2>Trusted by builders who need demos to behave like products.</h2>
+          <p>
+            PortalModeler is designed for the moment where contract logic, execution safety, and product storytelling
+            need to land in the same screen.
+          </p>
+        </div>
+        <div className="testimonial-marquee" aria-label="User reviews">
+          {[0, 1].map((row) => (
+            <div key={row} className="testimonial-row" style={{ marginLeft: row === 1 ? 200 : 0 }}>
+              {[...testimonialItems, ...testimonialItems, ...testimonialItems].map(([quote, name, role], index) => (
+                <article key={`${row}-${name}-${index}`} className="user-review">
+                  <p>{quote}</p>
+                  <div className="user-review__person">
+                    <span>{name.slice(0, 1)}</span>
+                    <div>
+                      <strong>{name}</strong>
+                      <small>{role}</small>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="future-plan" className="home-section reveal-section">
+        <div className="section-copy section-copy--center">
+          <span className="section-label">Future plan</span>
+          <h2>From hackathon workbench to reusable Web3 modeling layer.</h2>
+          <p>
+            PortalModeler can grow from an executable demo board into a repeatable product workflow for teams building,
+            testing, and explaining contract systems.
+          </p>
+        </div>
+        <div className="plan-grid">
+          {futurePlanItems.map(([title, body], index) => (
+            <article key={title} className="plan-card">
+              <strong>{String(index + 1).padStart(2, "0")}</strong>
+              <span>{title}</span>
+              <p>{body}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section id="faq" className="home-section home-section--faq reveal-section">
+        <div className="section-copy section-copy--center">
+          <span className="section-label">FAQ</span>
+          <h2>Answers for reviewers and builders.</h2>
+          <p>
+            The important product constraints are visible: what runs locally, what is protected, and how the MVP can
+            evolve after the demo.
+          </p>
+        </div>
+        <div className="faq-list">
+          {faqItems.map(([question, answer], index) => {
+            const isOpen = openFaqIndexes.includes(index);
+            return (
+              <article key={question} className={`faq-item ${isOpen ? "open" : ""}`}>
+                <button type="button" className="faq-question" onClick={() => toggleFaq(index)}>
+                  <span>{question}</span>
+                  <strong>{isOpen ? "-" : "+"}</strong>
+                </button>
+                <div className="faq-answer">
+                  <p>{answer}</p>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="home-action reveal-section">
+        <div className="section-copy section-copy--center">
+          <span className="section-label">Build visually</span>
+          <h2>Open the workbench and run the Membership flow.</h2>
+          <p>
+            Use the board to connect the local chain, deploy the contract, call membership actions, read state, and
+            export the graph.
+          </p>
+        </div>
+        <button className="primary-cta" onClick={onOpenWorkbench}>
+          Launch workbench
+          <ArrowRight size={18} />
+        </button>
+      </section>
+
+      <footer className="home-footer">
+        <div className="home-footer__main">
+          <div className="home-footer__brand">
+            <PortalModelerBrand />
+            <p>Executable visual modeling for local Web3 contract workflows.</p>
+          </div>
+          {footerColumns.map((column) => (
+            <div key={column.title} className="home-footer__column">
+              <span>{column.title}</span>
+              {column.links.map(([label, href]) =>
+                label === "Workbench" ? (
+                  <button key={label} type="button" onClick={onOpenWorkbench}>
+                    {label}
+                  </button>
+                ) : (
+                  <a key={label} href={href}>
+                    {label}
+                  </a>
+                ),
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="home-footer__bottom">© 2026 PortalModeler. All rights reserved.</div>
+      </footer>
     </main>
   );
 }
@@ -857,9 +1083,12 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     <main className="app-shell">
       <header className="topbar">
         <div className="topbar__title">
-          <div className="eyebrow">PortalModeler Workbench</div>
-          <h1>Membership Flow Board</h1>
-          <p>Model, execute, and inspect a local ink! membership workflow from one dev-focused surface.</p>
+          <PortalModelerBrand compact />
+          <div>
+            <div className="eyebrow">PortalModeler Workbench</div>
+            <h1>Membership Flow Board</h1>
+            <p>Model, execute, and inspect a local ink! membership workflow from one dev-focused surface.</p>
+          </div>
         </div>
         <div className="topbar__actions">
           <button className="text-button quiet" title="Back to homepage" onClick={onOpenHome}>
