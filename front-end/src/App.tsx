@@ -155,22 +155,22 @@ const futurePlanItems = [
 
 const testimonialItems = [
   [
-    "PortalModeler makes the demo path obvious. Reviewers can see the contract flow, state checks, and execution logs without switching tools.",
+    "The contract flow is obvious, with state checks and logs in one place.",
     "Mina Tran",
     "Web3 builder",
   ],
   [
-    "The whitelist runner is exactly the right boundary for a hackathon app: visual enough for product, constrained enough for local scripts.",
+    "The whitelist runner feels visual, useful, and still safe for local scripts.",
     "Avery Chen",
     "Protocol engineer",
   ],
   [
-    "I like that it turns contract deployment into a board. The steps are visible, repeatable, and easy to explain to non-runtime people.",
+    "Deployment becomes a repeatable board that is easy to explain.",
     "Jon Bell",
     "Developer advocate",
   ],
   [
-    "The state timeline is the strongest part. It gives the UI a product story instead of being another terminal wrapper.",
+    "The state timeline makes the demo feel like a real product surface.",
     "Sara Nguyen",
     "Product reviewer",
   ],
