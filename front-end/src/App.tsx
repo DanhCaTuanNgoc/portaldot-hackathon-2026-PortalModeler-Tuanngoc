@@ -16,6 +16,7 @@ import {
   ArrowRight,
   Boxes,
   CheckCircle2,
+  ChevronDown,
   ClipboardList,
   Code2,
   Copy,
@@ -39,7 +40,7 @@ import {
   UserRound,
   WalletCards,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import portalLogo from "./assets/logo_portalmodeler.png";
 
 type PortalNodeKind =
@@ -221,7 +222,10 @@ const footerColumns = [
   },
 ];
 
-const splineHeroUrl = "https://my.spline.design/3ddesigntextcopycopy-TZgCdtvnWqBX15ySbgH38cvT-v0c/";
+const heroVideoUrl =
+  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_065045_c44942da-53c6-4804-b734-f9e07fc22e08.mp4";
+
+const heroPartners = ["Portaldot", "Substrate", "ink!", "Vite", "React Flow", "Local Node"];
 
 const advancedConfigKeys = new Set(["account", "metadataPath", "wasmPath", "eventName"]);
 
@@ -505,6 +509,54 @@ function PortalModelerBrand({ compact = false }: { compact?: boolean }) {
 function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
   useRevealOnScroll();
   const [openFaqIndexes, setOpenFaqIndexes] = useState<number[]>([0]);
+  const heroVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    const video = heroVideoRef.current;
+    if (!video) {
+      return;
+    }
+
+    let animationFrame = 0;
+    let replayTimer = 0;
+    const fadeSeconds = 0.5;
+
+    function updateOpacity() {
+      if (video.duration && Number.isFinite(video.duration)) {
+        const remaining = video.duration - video.currentTime;
+        let opacity = 1;
+
+        if (video.currentTime < fadeSeconds) {
+          opacity = video.currentTime / fadeSeconds;
+        } else if (remaining < fadeSeconds) {
+          opacity = Math.max(0, remaining / fadeSeconds);
+        }
+
+        video.style.opacity = String(opacity);
+      }
+
+      animationFrame = window.requestAnimationFrame(updateOpacity);
+    }
+
+    function replayVideo() {
+      video.style.opacity = "0";
+      video.currentTime = 0;
+      replayTimer = window.setTimeout(() => {
+        void video.play();
+      }, 100);
+    }
+
+    video.style.opacity = "0";
+    video.addEventListener("ended", replayVideo);
+    void video.play();
+    animationFrame = window.requestAnimationFrame(updateOpacity);
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.clearTimeout(replayTimer);
+      video.removeEventListener("ended", replayVideo);
+    };
+  }, []);
 
   function toggleFaq(index: number) {
     setOpenFaqIndexes((current) =>
@@ -514,58 +566,71 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
 
   return (
     <main className="home-shell">
-      <nav className="home-nav">
-        <PortalModelerBrand />
-        <div className="home-nav__links">
-          <a href="#workflow">Workflow</a>
-          <a href="#execution">Execution</a>
-          <a href="#visualization">Visualization</a>
-          <a href="#future-plan">Future plan</a>
-          <a href="#faq">FAQ</a>
-        </div>
-        <div className="home-nav__actions">
-          <button className="home-nav__button" onClick={onOpenWorkbench}>
-            Open workbench
-          </button>
-        </div>
-      </nav>
-
       <section className="home-hero">
-        <div className="home-hero__content">
-          <div className="hero-kicker">
-            <span />
-            Model-driven contract workflows
+        <video
+          ref={heroVideoRef}
+          className="home-hero__video"
+          src={heroVideoUrl}
+          muted
+          playsInline
+          preload="auto"
+          aria-hidden="true"
+        />
+        <div className="home-hero__blur" aria-hidden="true" />
+
+        <div className="home-hero__layer">
+          <nav className="home-nav">
+            <PortalModelerBrand />
+            <div className="home-nav__links">
+              <a href="#workflow">
+                Workflow <ChevronDown size={15} />
+              </a>
+              <a href="#execution">Execution</a>
+              <a href="#future-plan">Roadmap</a>
+              <a href="#faq">
+                Learning <ChevronDown size={15} />
+              </a>
+            </div>
+            <div className="home-nav__actions">
+              <button className="home-nav__button hero-secondary" onClick={onOpenWorkbench}>
+                Open Workbench
+              </button>
+            </div>
+          </nav>
+          <div className="home-nav__divider" />
+
+          <div className="home-hero__center">
+            <div className="home-hero__content">
+              <h1>
+                Model <span>Flows</span>
+              </h1>
+              <p>
+                Build, run, and verify Portaldot smart-contract workflows from one visual workbench.
+              </p>
+              <button className="hero-secondary home-hero__cta" onClick={onOpenWorkbench}>
+                Launch Workbench
+              </button>
+            </div>
           </div>
-          <h1>Visualize and execute Web3 contract flows.</h1>
-          <p>
-            PortalModeler turns Portaldot setup, contract deployment, calls, state reads, and event review into one
-            executable visual model.
-          </p>
-          <div className="hero-actions">
-            <button className="primary-cta" onClick={onOpenWorkbench}>
-              Launch workbench
-              <ArrowRight size={18} />
-            </button>
-            <a className="secondary-cta" href="#workflow">
-              Explore the flow
-            </a>
+
+          <div className="hero-marquee" aria-label="PortalModeler stack">
+            <div className="hero-marquee__inner">
+              <div className="hero-marquee__label">
+                <span>Built for local</span>
+                <span>contract demos</span>
+              </div>
+              <div className="hero-marquee__track">
+                <div className="hero-marquee__row">
+                  {[...heroPartners, ...heroPartners].map((name, index) => (
+                    <div key={`${name}-${index}`} className="hero-logo">
+                      <span className="liquid-glass">{name.slice(0, 1)}</span>
+                      <strong>{name}</strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="home-hero__visual">
-          <iframe
-            className="home-hero__spline"
-            src={splineHeroUrl}
-            title="PortalModeler 3D component"
-            loading="eager"
-            allow="autoplay; fullscreen; xr-spatial-tracking"
-            allowTransparency
-          />
-        </div>
-        <div className="hero-status-strip">
-          <span>Phase 0 ready</span>
-          <span>Visual board</span>
-          <span>Safe script runner</span>
-          <span>State timeline</span>
         </div>
       </section>
 
