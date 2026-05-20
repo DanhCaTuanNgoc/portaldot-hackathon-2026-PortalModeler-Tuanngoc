@@ -1,22 +1,4 @@
 import {
-  Background,
-  BackgroundVariant,
-  ConnectionMode,
-  Handle,
-  MarkerType,
-  Position,
-  ReactFlow,
-  addEdge,
-  useEdgesState,
-  useNodesState,
-  type Connection,
-  type Edge,
-  type Node,
-  type NodeProps,
-  type ReactFlowInstance,
-} from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
-import {
   ArrowRight,
   Boxes,
   CheckCircle2,
@@ -43,7 +25,7 @@ import {
   UserRound,
   WalletCards,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent } from "react";
 import portalLogo from "./assets/logo_portalmodeler.png";
 
 type PortalNodeKind =
@@ -79,7 +61,36 @@ type PortalNodeData = {
   config: PortalNodeConfig;
 } & Record<string, unknown>;
 
-type PortalFlowNode = Node<PortalNodeData, "portal">;
+type XYPosition = {
+  x: number;
+  y: number;
+};
+
+type PortalFlowNode = {
+  id: string;
+  type: "portal";
+  position: XYPosition;
+  selected?: boolean;
+  data: PortalNodeData;
+};
+
+type Edge = {
+  id: string;
+  source: string;
+  target: string;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+  animated?: boolean;
+  className?: string;
+  selected?: boolean;
+};
+
+type Connection = {
+  source: string | null;
+  target: string | null;
+  sourceHandle?: string | null;
+  targetHandle?: string | null;
+};
 
 type Template = {
   kind: PortalNodeKind;
@@ -323,7 +334,13 @@ const flowOrder: PortalNodeKind[] = templates.map((template) => template.kind);
 type FlowEdgeState = "planned" | "running" | "success" | "error";
 type FlowHandleId = "top" | "right" | "bottom" | "left";
 
-const portalNodeSize = { width: 220, height: 132 };
+const portalNodeSize = { width: 220, height: 188 };
+const boardZoom = {
+  min: 0.25,
+  max: 2.2,
+  wheelSpeed: 0.001,
+};
+const flowHandleIds: FlowHandleId[] = ["top", "right", "bottom", "left"];
 
 function flowEdgeId(source: string, target: string, sourceHandle = "right", targetHandle = "left") {
   return `${source}-${sourceHandle}-${targetHandle}-${target}`;
@@ -360,14 +377,8 @@ function makeFlowEdge(
     target,
     sourceHandle,
     targetHandle,
-    type: "smoothstep",
     animated: state === "running",
     className: flowEdgeClass(state),
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      width: 18,
-      height: 18,
-    },
   };
 }
 
@@ -431,40 +442,37 @@ function hydrateCommand(template: string, config: PortalNodeConfig, endpoint = "
     .replace("{value}", config.value || "100000000000000");
 }
 
-const PortalNode = memo(function PortalNode({ data, selected, isConnectable }: NodeProps<PortalFlowNode>) {
+type PortalNodeCardProps = {
+  node: PortalFlowNode;
+  selected: boolean;
+  isConnectable: boolean;
+  onHandlePointerDown: (event: PointerEvent<HTMLButtonElement>, handle: FlowHandleId) => void;
+};
+
+const PortalNodeCard = memo(function PortalNodeCard({
+  node,
+  selected,
+  isConnectable,
+  onHandlePointerDown,
+}: PortalNodeCardProps) {
+  const { data } = node;
   const template = templates.find((item) => item.kind === data.kind) || templates[0];
   const Icon = template.icon;
 
   return (
     <div className={`portal-node ${selected ? "selected" : ""}`}>
-      <Handle
-        id="top"
-        className="portal-node__handle portal-node__handle--top"
-        type="source"
-        position={Position.Top}
-        isConnectable={isConnectable}
-      />
-      <Handle
-        id="right"
-        className="portal-node__handle portal-node__handle--right"
-        type="source"
-        position={Position.Right}
-        isConnectable={isConnectable}
-      />
-      <Handle
-        id="bottom"
-        className="portal-node__handle portal-node__handle--bottom"
-        type="source"
-        position={Position.Bottom}
-        isConnectable={isConnectable}
-      />
-      <Handle
-        id="left"
-        className="portal-node__handle portal-node__handle--left"
-        type="source"
-        position={Position.Left}
-        isConnectable={isConnectable}
-      />
+      {flowHandleIds.map((handle) => (
+        <button
+          key={handle}
+          type="button"
+          aria-label={`${data.label} ${handle} connector`}
+          className={`portal-node__handle portal-node__handle--${handle}`}
+          data-node-id={node.id}
+          data-flow-handle={handle}
+          disabled={!isConnectable}
+          onPointerDown={(event) => onHandlePointerDown(event, handle)}
+        />
+      ))}
       <div className="portal-node__top">
         <span className={`portal-node__icon ${data.status}`}>
           {data.status === "running" ? <Loader2 className="spin" size={18} /> : <Icon size={18} />}
@@ -478,7 +486,425 @@ const PortalNode = memo(function PortalNode({ data, selected, isConnectable }: N
   );
 });
 
-const nodeTypes = { portal: PortalNode };
+type LightweightFlowCanvasProps = {
+  nodes: PortalFlowNode[];
+  edges: Edge[];
+  selectedNodeIds: string[];
+  selectedEdgeIds: string[];
+  flowConnectMode: boolean;
+  onMoveNodes: (nodeIds: string[], delta: XYPosition) => void;
+  onNodeDragEnd: (nodeIds: string[]) => void;
+  onSelectNode: (nodeId: string, append: boolean) => void;
+  onSelectEdge: (edgeId: string, append: boolean) => void;
+  onSelectCanvas: () => void;
+  onConnect: (connection: Connection) => void;
+  onDropTemplate: (template: Template, position: XYPosition) => void;
+};
+
+function handlePoint(node: PortalFlowNode, handle?: string | null) {
+  const side = (handle || "right") as FlowHandleId;
+  const { x, y } = node.position;
+
+  if (side === "left") {
+    return { x, y: y + portalNodeSize.height / 2 };
+  }
+  if (side === "top") {
+    return { x: x + portalNodeSize.width / 2, y };
+  }
+  if (side === "bottom") {
+    return { x: x + portalNodeSize.width / 2, y: y + portalNodeSize.height };
+  }
+  return { x: x + portalNodeSize.width, y: y + portalNodeSize.height / 2 };
+}
+
+function handleVector(handle?: string | null) {
+  const side = (handle || "right") as FlowHandleId;
+
+  if (side === "left") {
+    return { x: -1, y: 0 };
+  }
+  if (side === "top") {
+    return { x: 0, y: -1 };
+  }
+  if (side === "bottom") {
+    return { x: 0, y: 1 };
+  }
+  return { x: 1, y: 0 };
+}
+
+function edgePath(source: XYPosition, target: XYPosition, sourceHandle?: string | null, targetHandle?: string | null) {
+  const sourceVector = handleVector(sourceHandle);
+  const targetVector = handleVector(targetHandle);
+  const distance = Math.hypot(target.x - source.x, target.y - source.y);
+  const controlDistance = Math.min(180, Math.max(44, distance * 0.34));
+  const sourceControl = {
+    x: source.x + sourceVector.x * controlDistance,
+    y: source.y + sourceVector.y * controlDistance,
+  };
+  const targetControl = {
+    x: target.x + targetVector.x * controlDistance,
+    y: target.y + targetVector.y * controlDistance,
+  };
+
+  return `M ${source.x} ${source.y} C ${sourceControl.x} ${sourceControl.y}, ${targetControl.x} ${targetControl.y}, ${target.x} ${target.y}`;
+}
+
+type ConnectingState = {
+  source: string;
+  sourceHandle: FlowHandleId;
+  target: XYPosition;
+};
+
+function LightweightFlowCanvas({
+  nodes,
+  edges,
+  selectedNodeIds,
+  selectedEdgeIds,
+  flowConnectMode,
+  onMoveNodes,
+  onNodeDragEnd,
+  onSelectNode,
+  onSelectEdge,
+  onSelectCanvas,
+  onConnect,
+  onDropTemplate,
+}: LightweightFlowCanvasProps) {
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const pendingMoveRef = useRef<{ nodeIds: string[]; delta: XYPosition } | null>(null);
+  const dragRef = useRef<{
+    pointerId: number;
+    nodeIds: string[];
+    origin: XYPosition;
+    lastDelta: XYPosition;
+  } | null>(null);
+  const panRef = useRef<{ pointerId: number; origin: XYPosition; viewport: XYPosition } | null>(null);
+  const [viewport, setViewport] = useState({ x: 28, y: 28, zoom: 0.88 });
+  const [connecting, setConnecting] = useState<ConnectingState | null>(null);
+  const nodesById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+
+  function screenToFlow(clientX: number, clientY: number) {
+    const rect = boardRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return { x: 0, y: 0 };
+    }
+
+    return {
+      x: (clientX - rect.left - viewport.x) / viewport.zoom,
+      y: (clientY - rect.top - viewport.y) / viewport.zoom,
+    };
+  }
+
+  function flushMove() {
+    rafRef.current = null;
+    const pending = pendingMoveRef.current;
+    if (!pending) {
+      return;
+    }
+    pendingMoveRef.current = null;
+    onMoveNodes(pending.nodeIds, pending.delta);
+  }
+
+  function scheduleMove(nodeIds: string[], delta: XYPosition) {
+    pendingMoveRef.current = { nodeIds, delta };
+    if (rafRef.current === null) {
+      rafRef.current = window.requestAnimationFrame(flushMove);
+    }
+  }
+
+  function startNodeDrag(event: PointerEvent<HTMLDivElement>, nodeId: string) {
+    if (event.button !== 0 || (event.target as HTMLElement).closest("[data-flow-handle]")) {
+      return;
+    }
+
+    const append = event.shiftKey || event.metaKey || event.ctrlKey;
+    onSelectNode(nodeId, append);
+    const nodeIds = selectedNodeIds.includes(nodeId) && !append ? selectedNodeIds : [nodeId];
+    dragRef.current = {
+      pointerId: event.pointerId,
+      nodeIds,
+      origin: { x: event.clientX, y: event.clientY },
+      lastDelta: { x: 0, y: 0 },
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveNodeDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const nextDelta = {
+      x: (event.clientX - drag.origin.x) / viewport.zoom,
+      y: (event.clientY - drag.origin.y) / viewport.zoom,
+    };
+    const frameDelta = {
+      x: nextDelta.x - drag.lastDelta.x,
+      y: nextDelta.y - drag.lastDelta.y,
+    };
+    drag.lastDelta = nextDelta;
+    scheduleMove(drag.nodeIds, frameDelta);
+  }
+
+  function stopNodeDrag(event: PointerEvent<HTMLDivElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    if (rafRef.current !== null) {
+      window.cancelAnimationFrame(rafRef.current);
+      flushMove();
+    }
+    dragRef.current = null;
+    onNodeDragEnd(drag.nodeIds);
+  }
+
+  function startPan(event: PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 && event.button !== 1) {
+      return;
+    }
+
+    event.preventDefault();
+    panRef.current = {
+      pointerId: event.pointerId,
+      origin: { x: event.clientX, y: event.clientY },
+      viewport: { x: viewport.x, y: viewport.y },
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function movePan(event: PointerEvent<HTMLDivElement>) {
+    const pan = panRef.current;
+    if (!pan || pan.pointerId !== event.pointerId) {
+      return;
+    }
+    setViewport((current) => ({
+      ...current,
+      x: pan.viewport.x + event.clientX - pan.origin.x,
+      y: pan.viewport.y + event.clientY - pan.origin.y,
+    }));
+  }
+
+  function stopPan(event: PointerEvent<HTMLDivElement>) {
+    if (panRef.current?.pointerId === event.pointerId) {
+      panRef.current = null;
+    }
+  }
+
+  const zoomBoard = useCallback((event: globalThis.WheelEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = boardRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return;
+    }
+
+    const pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    const deltaModeScale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? rect.height : 1;
+    const wheelDeltaX = event.deltaX * deltaModeScale;
+    const wheelDeltaY = event.deltaY * deltaModeScale;
+    const shouldZoom = event.ctrlKey || event.metaKey || event.altKey;
+
+    if (!shouldZoom) {
+      setViewport((current) => ({
+        ...current,
+        x: current.x - (event.shiftKey ? wheelDeltaY : wheelDeltaX),
+        y: current.y - (event.shiftKey ? 0 : wheelDeltaY),
+      }));
+      return;
+    }
+
+    setViewport((current) => {
+      const nextZoom = Math.min(boardZoom.max, Math.max(boardZoom.min, current.zoom - wheelDeltaY * boardZoom.wheelSpeed));
+      const flow = {
+        x: (pointer.x - current.x) / current.zoom,
+        y: (pointer.y - current.y) / current.zoom,
+      };
+
+      return {
+        zoom: nextZoom,
+        x: pointer.x - flow.x * nextZoom,
+        y: pointer.y - flow.y * nextZoom,
+      };
+    });
+  }, []);
+
+  useEffect(() => {
+    const board = boardRef.current;
+    if (!board) {
+      return;
+    }
+
+    const wheelTarget = board.parentElement || board;
+    wheelTarget.addEventListener("wheel", zoomBoard, { passive: false });
+    return () => wheelTarget.removeEventListener("wheel", zoomBoard);
+  }, [zoomBoard]);
+
+  function startConnection(event: PointerEvent<HTMLButtonElement>, nodeId: string, sourceHandle: FlowHandleId) {
+    if (!flowConnectMode) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const sourceNode = nodesById.get(nodeId);
+    setConnecting({
+      source: nodeId,
+      sourceHandle,
+      target: sourceNode ? handlePoint(sourceNode, sourceHandle) : screenToFlow(event.clientX, event.clientY),
+    });
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveConnection(event: PointerEvent<HTMLDivElement>) {
+    if (!connecting) {
+      return;
+    }
+    const pointer = screenToFlow(event.clientX, event.clientY);
+    setConnecting((current) => current ? { ...current, target: pointer } : null);
+  }
+
+  function finishConnection(event: PointerEvent<HTMLDivElement>) {
+    if (!connecting) {
+      return;
+    }
+
+    const hitTarget = document
+      .elementFromPoint(event.clientX, event.clientY)
+      ?.closest<HTMLElement>("[data-node-id][data-flow-handle]");
+
+    if (hitTarget && hitTarget.dataset.nodeId !== connecting.source) {
+      onConnect({
+        source: connecting.source,
+        target: hitTarget.dataset.nodeId || null,
+        sourceHandle: connecting.sourceHandle,
+        targetHandle: hitTarget.dataset.flowHandle || "left",
+      });
+    }
+    setConnecting(null);
+  }
+
+  function dropTemplate(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const templateKind = event.dataTransfer.getData("application/portal-template") as PortalNodeKind;
+    const template = templates.find((item) => item.kind === templateKind);
+    if (template) {
+      onDropTemplate(template, screenToFlow(event.clientX, event.clientY));
+    }
+  }
+
+  return (
+    <div
+      ref={boardRef}
+      className={`flow-board ${flowConnectMode ? "flow-board--connect" : ""}`}
+      onPointerDown={(event) => {
+        const interactiveTarget = (event.target as HTMLElement).closest(".flow-board__node, .flow-board__edge");
+        if (!interactiveTarget) {
+          onSelectCanvas();
+          startPan(event);
+        }
+      }}
+      onPointerMove={(event) => {
+        movePan(event);
+        moveConnection(event);
+      }}
+      onPointerUp={(event) => {
+        stopPan(event);
+        finishConnection(event);
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }}
+      onDrop={dropTemplate}
+    >
+      <div
+        className="flow-board__grid"
+        style={{
+          backgroundPosition: `${viewport.x}px ${viewport.y}px`,
+          backgroundSize: `${24 * viewport.zoom}px ${24 * viewport.zoom}px`,
+        }}
+      />
+      <div
+        className="flow-board__world"
+        style={{ transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.zoom})` }}
+      >
+        <svg className="flow-board__edges" width="2600" height="1200" viewBox="0 0 2600 1200">
+          <defs>
+            <marker id="flow-arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+              <path d="M 2 2 L 10 6 L 2 10 z" />
+            </marker>
+          </defs>
+          {edges.map((edge) => {
+            const source = nodesById.get(edge.source);
+            const target = nodesById.get(edge.target);
+            if (!source || !target) {
+              return null;
+            }
+            const sourcePoint = handlePoint(source, edge.sourceHandle);
+            const targetPoint = handlePoint(target, edge.targetHandle);
+            return (
+              <g
+                key={edge.id}
+                tabIndex={0}
+                role="button"
+                aria-label={`Line from ${source.data.label} to ${target.data.label}`}
+                className={`flow-board__edge ${edge.className || ""} ${selectedEdgeIds.includes(edge.id) ? "selected" : ""}`}
+                onFocus={() => onSelectEdge(edge.id, false)}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  onSelectEdge(edge.id, event.shiftKey || event.metaKey || event.ctrlKey);
+                }}
+              >
+                <path className="flow-board__edge-hit" d={edgePath(sourcePoint, targetPoint, edge.sourceHandle, edge.targetHandle)} />
+                <path
+                  className="flow-board__edge-path"
+                  d={edgePath(sourcePoint, targetPoint, edge.sourceHandle, edge.targetHandle)}
+                  markerEnd="url(#flow-arrow)"
+                />
+              </g>
+            );
+          })}
+          {connecting ? (
+            <path
+              className="flow-board__edge-path flow-board__edge-preview"
+              d={edgePath(
+                handlePoint(nodesById.get(connecting.source)!, connecting.sourceHandle),
+                connecting.target,
+                connecting.sourceHandle,
+                null,
+              )}
+            />
+          ) : null}
+        </svg>
+        {nodes.map((node) => (
+          <div
+            key={node.id}
+            tabIndex={0}
+            role="button"
+            aria-label={node.data.label}
+            className="flow-board__node"
+            style={{ transform: `translate3d(${node.position.x}px, ${node.position.y}px, 0)` }}
+            onFocus={() => onSelectNode(node.id, false)}
+            onPointerDown={(event) => startNodeDrag(event, node.id)}
+            onPointerMove={moveNodeDrag}
+            onPointerUp={stopNodeDrag}
+            onPointerCancel={stopNodeDrag}
+          >
+            <PortalNodeCard
+              node={node}
+              selected={selectedNodeIds.includes(node.id)}
+              isConnectable={flowConnectMode}
+              onHandlePointerDown={(event, handle) => startConnection(event, node.id, handle)}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function configEntries(config: PortalNodeConfig) {
   return Object.entries(config).filter(([, value]) => value !== undefined);
@@ -985,8 +1411,8 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
 }
 
 function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
-  const [nodes, setNodes, onNodesChange] = useNodesState<PortalFlowNode>(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, setNodes] = useState<PortalFlowNode[]>(initialNodes);
+  const [edges, setEdges] = useState<Edge[]>(initialEdges);
   const [selectedNodeId, setSelectedNodeId] = useState(initialNodes[0].id);
   const [runLogs, setRunLogs] = useState<RunLog[]>([
     {
@@ -1001,7 +1427,6 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   const [beginnerMode, setBeginnerMode] = useState(true);
   const [flowConnectMode, setFlowConnectMode] = useState(false);
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
-  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<PortalFlowNode, Edge> | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([initialNodes[0].id]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
 
@@ -1063,8 +1488,8 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
         const sourceNode = nodes.find((node) => node.id === connection.source);
         const targetNode = nodes.find((node) => node.id === connection.target);
         const handles = sourceNode && targetNode ? closestFlowHandles(sourceNode, targetNode) : null;
-        const sourceHandle = handles?.sourceHandle || (connection.sourceHandle as FlowHandleId) || "right";
-        const targetHandle = handles?.targetHandle || (connection.targetHandle as FlowHandleId) || "left";
+        const sourceHandle = (connection.sourceHandle as FlowHandleId) || handles?.sourceHandle || "right";
+        const targetHandle = (connection.targetHandle as FlowHandleId) || handles?.targetHandle || "left";
         const exists = current.some(
           (edge) =>
             edge.source === connection.source &&
@@ -1074,7 +1499,8 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
           return current;
         }
 
-        return addEdge(
+        return [
+          ...current,
           makeFlowEdge(
             connection.source,
             connection.target,
@@ -1082,36 +1508,8 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
             sourceHandle,
             targetHandle,
           ),
-          current,
-        );
+        ];
       });
-    },
-    [nodes, setEdges],
-  );
-
-  const onReconnect = useCallback(
-    (oldEdge: Edge, connection: Connection) => {
-      if (!connection.source || !connection.target) {
-        return;
-      }
-
-      const sourceNode = nodes.find((node) => node.id === connection.source);
-      const targetNode = nodes.find((node) => node.id === connection.target);
-      const handles = sourceNode && targetNode ? closestFlowHandles(sourceNode, targetNode) : null;
-
-      setEdges((current) =>
-        current.map((edge) =>
-          edge.id === oldEdge.id
-            ? makeFlowEdge(
-                connection.source!,
-                connection.target!,
-                "planned",
-                handles?.sourceHandle || (connection.sourceHandle as FlowHandleId) || "right",
-                handles?.targetHandle || (connection.targetHandle as FlowHandleId) || "left",
-              )
-            : edge,
-        ),
-      );
     },
     [nodes, setEdges],
   );
@@ -1182,6 +1580,10 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     void refreshSnapshot();
   }, [refreshHealth, refreshSnapshot]);
 
+  useEffect(() => {
+    setEdges((current) => current.map((edge) => rerouteEdgeToClosestHandles(edge, nodes)));
+  }, [nodes]);
+
   function pushLog(log: Omit<RunLog, "id">) {
     setRunLogs((current) => [{ id: `${Date.now()}-${current.length}`, ...log }, ...current].slice(0, 18));
   }
@@ -1218,34 +1620,49 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     event.dataTransfer.dropEffect = "copy";
   }
 
-  function dropTemplateOnBoard(event: DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const templateKind = event.dataTransfer.getData("application/portal-template") as PortalNodeKind;
-    const template = templates.find((item) => item.kind === templateKind);
-
-    if (!template) {
-      return;
-    }
-
-    const position = flowInstance?.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-    addTemplate(template, position);
-  }
-
-  function selectBoardItems(selection: PortalFlowNode[], edgeSelection: Edge[]) {
-    const ids = selection.map((node) => node.id);
-    setSelectedNodeIds(ids);
-    setSelectedEdgeIds(edgeSelection.map((edge) => edge.id));
-
-    if (selection.length > 0) {
-      setSelectedNodeId(selection[selection.length - 1].id);
-    }
-  }
-
   function clearBoardSelection() {
     setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
     setNodes((current) => current.map((node) => ({ ...node, selected: false })));
     setEdges((current) => current.map((edge) => ({ ...edge, selected: false })));
+  }
+
+  function selectNode(nodeId: string, append: boolean) {
+    setSelectedNodeId(nodeId);
+    setSelectedEdgeIds([]);
+    setSelectedNodeIds((current) => {
+      if (!append) {
+        return [nodeId];
+      }
+      return current.includes(nodeId) ? current.filter((id) => id !== nodeId) : [...current, nodeId];
+    });
+  }
+
+  function selectEdge(edgeId: string, append: boolean) {
+    setSelectedNodeIds([]);
+    setSelectedEdgeIds((current) => {
+      if (!append) {
+        return [edgeId];
+      }
+      return current.includes(edgeId) ? current.filter((id) => id !== edgeId) : [...current, edgeId];
+    });
+  }
+
+  function moveBoardNodes(nodeIds: string[], delta: XYPosition) {
+    const moving = new Set(nodeIds);
+    setNodes((current) =>
+      current.map((node) =>
+        moving.has(node.id)
+          ? {
+              ...node,
+              position: {
+                x: Math.round(node.position.x + delta.x),
+                y: Math.round(node.position.y + delta.y),
+              },
+            }
+          : node,
+      ),
+    );
   }
 
   function deleteSelectedItems() {
@@ -1286,24 +1703,8 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     });
   }
 
-  function deleteSelectedEdges() {
-    if (selectedEdgeIds.length === 0) {
-      return;
-    }
-
-    const selectedEdgesSet = new Set(selectedEdgeIds);
-    setEdges((current) => current.filter((edge) => !selectedEdgesSet.has(edge.id)));
-    setSelectedEdgeIds([]);
-    pushLog({
-      level: "info",
-      title: "Lines deleted",
-      body: `${selectedEdgesSet.size} selected line${selectedEdgesSet.size === 1 ? "" : "s"} removed from the visual board.`,
-    });
-  }
-
-  function rerouteNodeEdgesAfterDrag(node: PortalFlowNode) {
-    const nextNodes = nodes.map((item) => (item.id === node.id ? node : item));
-    rerouteConnectedEdges(nextNodes, [node.id]);
+  function rerouteNodeEdgesAfterDrag(nodeIds: string[]) {
+    rerouteConnectedEdges(nodes, nodeIds);
   }
 
   function duplicateSelectedNodes() {
@@ -1574,38 +1975,23 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
             </div>
           </div>
           <div
-            className={`flow-canvas ${flowConnectMode ? "flow-canvas--connect" : ""}`}
+            className="flow-canvas"
             onDragOver={allowBoardDrop}
-            onDrop={dropTemplateOnBoard}
           >
-            <ReactFlow
+            <LightweightFlowCanvas
               nodes={nodes}
               edges={edges}
-              nodeTypes={nodeTypes}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
+              selectedNodeIds={selectedNodeIds}
+              selectedEdgeIds={selectedEdgeIds}
+              flowConnectMode={flowConnectMode}
+              onMoveNodes={moveBoardNodes}
+              onNodeDragEnd={rerouteNodeEdgesAfterDrag}
+              onSelectNode={selectNode}
+              onSelectEdge={selectEdge}
+              onSelectCanvas={clearBoardSelection}
               onConnect={onConnect}
-              onReconnect={onReconnect}
-              onNodeDragStop={(_, node) => rerouteNodeEdgesAfterDrag(node as PortalFlowNode)}
-              onInit={setFlowInstance}
-              onNodeClick={(_, node) => {
-                setSelectedNodeId(node.id);
-                setSelectedNodeIds([node.id]);
-              }}
-              onSelectionChange={({ nodes: selection, edges: edgeSelection }) =>
-                selectBoardItems(selection as PortalFlowNode[], edgeSelection as Edge[])
-              }
-              connectionMode={ConnectionMode.Loose}
-              nodesConnectable={flowConnectMode}
-              edgesReconnectable={flowConnectMode}
-              reconnectRadius={14}
-              onlyRenderVisibleElements
-              deleteKeyCode={null}
-              selectionOnDrag
-              fitView
-            >
-              <Background variant={BackgroundVariant.Dots} gap={24} size={1} />
-            </ReactFlow>
+              onDropTemplate={addTemplate}
+            />
             <div className="canvas-action-dock" role="dialog" aria-label="Visual board selection actions">
               <div className="canvas-action-dock__meta">
                 <span>Selection ops</span>
@@ -1639,15 +2025,6 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
                 >
                   <Trash2 size={14} />
                   Delete
-                </button>
-                <button
-                  className="canvas-action danger"
-                  title="Delete selected lines"
-                  onClick={deleteSelectedEdges}
-                  disabled={selectedEdgeIds.length === 0}
-                >
-                  <Trash2 size={14} />
-                  Delete lines
                 </button>
                 <button className="canvas-action quiet" title="Clear current selection" onClick={clearBoardSelection}>
                   Clear
