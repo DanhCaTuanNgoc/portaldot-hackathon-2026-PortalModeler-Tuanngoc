@@ -25,6 +25,7 @@ import {
   Trash2,
   UserRound,
   WalletCards,
+  Home,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent } from "react";
 import portalLogo from "./assets/logo_portalmodeler.png";
@@ -244,81 +245,6 @@ type NodeValidationRule = {
   validate?: (node: PortalFlowNode, context: WorkflowContext) => ValidationResult;
 };
 
-const futurePlanItems = [
-  ["Model import", "Load BPMN-style specs and generate PortalModeler graphs with safe script bindings."],
-  ["Smart validation", "Preflight every node against artifacts, chain metadata, account balance, and contract ABI."],
-  ["Team demos", "Share replayable workflow snapshots with logs, state cards, and timeline evidence."],
-];
-
-const testimonialItems = [
-  [
-    "The contract flow is obvious, with state checks and logs in one place.",
-    "Mina Tran",
-    "Web3 builder",
-  ],
-  [
-    "The whitelist runner feels visual, useful, and still safe for local scripts.",
-    "Avery Chen",
-    "Protocol engineer",
-  ],
-  [
-    "Deployment becomes a repeatable board that is easy to explain.",
-    "Jon Bell",
-    "Developer advocate",
-  ],
-  [
-    "The state timeline makes the demo feel like a real product surface.",
-    "Sara Nguyen",
-    "Product reviewer",
-  ],
-];
-
-const faqItems = [
-  [
-    "Is PortalModeler only a landing page?",
-    "No. The landing page introduces the product, while the workbench is the actual visual board for running the local Membership contract flow.",
-  ],
-  [
-    "Can the browser run arbitrary scripts?",
-    "No. Execution goes through a whitelist in the Vite middleware so only known PortalModeler workflow nodes can call local scripts.",
-  ],
-  [
-    "What chain does the MVP target?",
-    "The MVP targets a local Portaldot/Substrate-style development node over ws://127.0.0.1:9944.",
-  ],
-  [
-    "What is next after the hackathon MVP?",
-    "The next plan is importable models, deeper validation, reusable run snapshots, and richer contract/state visualizations.",
-  ],
-];
-
-const footerColumns = [
-  {
-    title: "Product",
-    links: [
-      ["Workflow", "#workflow"],
-      ["Execution", "#execution"],
-      ["Visualization", "#visualization"],
-    ],
-  },
-  {
-    title: "Build",
-    links: [
-      ["Future plan", "#future-plan"],
-      ["FAQ", "#faq"],
-      ["Workbench", "#"],
-    ],
-  },
-  {
-    title: "Project",
-    links: [
-      ["Portaldot", "#workflow"],
-      ["ink! contracts", "#execution"],
-      ["Local demo", "#visualization"],
-    ],
-  },
-];
-
 const heroVideoUrl =
   "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_065045_c44942da-53c6-4804-b734-f9e07fc22e08.mp4";
 
@@ -520,7 +446,7 @@ const flowOrder: PortalNodeKind[] = templates.map((template) => template.kind);
 type FlowEdgeState = "planned" | "running" | "success" | "error";
 type FlowHandleId = "top" | "right" | "bottom" | "left";
 
-const portalNodeSize = { width: 220, height: 188 };
+const portalNodeSize = { width: 220, height: 160 };
 const boardZoom = {
   min: 0.25,
   max: 2.2,
@@ -676,7 +602,6 @@ const PortalNodeCard = memo(function PortalNodeCard({
       </div>
       <div className="portal-node__title">{data.label}</div>
       <div className="portal-node__description">{data.description}</div>
-      <div className="portal-node__command">{hydrateCommand(data.command, data.config)}</div>
     </div>
   );
 });
@@ -1747,7 +1672,6 @@ function PortalModelerBrand({ compact = false }: { compact?: boolean }) {
 
 function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
   useRevealOnScroll();
-  const [openFaqIndexes, setOpenFaqIndexes] = useState<number[]>([0]);
   const heroVideoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -1797,12 +1721,6 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
     };
   }, []);
 
-  function toggleFaq(index: number) {
-    setOpenFaqIndexes((current) =>
-      current.includes(index) ? current.filter((item) => item !== index) : [...current, index],
-    );
-  }
-
   return (
     <main className="home-shell">
       <section className="home-hero">
@@ -1820,12 +1738,12 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
         <div className="home-hero__layer">
           <nav className="home-nav">
             <PortalModelerBrand />
-            <div className="home-nav__links">
+            {/* <div className="home-nav__links">
               <a href="#workflow">Workflow</a>
               <a href="#execution">Execution</a>
               <a href="#future-plan">Roadmap</a>
               <a href="#faq">Learning</a>
-            </div>
+            </div> */}
             <div className="home-nav__actions">
               <button className="home-nav__button hero-secondary" onClick={onOpenWorkbench}>
                 Open Workbench
@@ -1869,7 +1787,7 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
         </div>
       </section>
 
-      <section id="workflow" className="home-section reveal-section">
+      {/* <section id="workflow" className="home-section reveal-section">
         <div className="section-copy section-copy--center">
           <span className="section-label">Visual source of truth</span>
           <h2>One graph for the entire local contract path.</h2>
@@ -2049,7 +1967,7 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
           ))}
         </div>
         <div className="home-footer__bottom">© 2026 PortalModeler. All rights reserved.</div>
-      </footer>
+      </footer> */}
     </main>
   );
 }
@@ -2074,13 +1992,19 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([initialNodes[0].id]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
 
-  const selectedNode = nodes.find((node) => node.id === selectedNodeId) || nodes[0];
+  const selectedNode = nodes.find((node) => node.id === selectedNodeId) || null;
   const selectedNodes = useMemo(
     () => orderedSelection(nodes, selectedNodeIds),
     [nodes, selectedNodeIds],
   );
   const endpoint = nodes.find((node) => node.data.kind === "connectRpc")?.data.config.endpoint;
-  const guidance = nodeGuidance(selectedNode, health, snapshot, endpoint);
+  const guidance = selectedNode
+    ? nodeGuidance(selectedNode, health, snapshot, endpoint)
+    : {
+        level: "ready" as const,
+        title: "Board cleared",
+        items: ["The visual board is empty. Add a node from the palette to start a new workflow."],
+      };
   const setupChecklist = [
     { label: "Local RPC online", done: Boolean(health?.rpcReachable) },
     { label: "Contract artifacts ready", done: Boolean(health?.artifactsReady) },
@@ -2134,20 +2058,23 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      if (!connection.source || !connection.target) {
+      if (connection.source === null || connection.target === null) {
         return;
       }
 
+      const sourceId: string = connection.source;
+      const targetId: string = connection.target;
+
       setEdges((current) => {
-        const sourceNode = nodes.find((node) => node.id === connection.source);
-        const targetNode = nodes.find((node) => node.id === connection.target);
+        const sourceNode = nodes.find((node) => node.id === sourceId);
+        const targetNode = nodes.find((node) => node.id === targetId);
         const handles = sourceNode && targetNode ? closestFlowHandles(sourceNode, targetNode) : null;
         const sourceHandle = (connection.sourceHandle as FlowHandleId) || handles?.sourceHandle || "right";
         const targetHandle = (connection.targetHandle as FlowHandleId) || handles?.targetHandle || "left";
         const exists = current.some(
           (edge) =>
-            edge.source === connection.source &&
-            edge.target === connection.target,
+            edge.source === sourceId &&
+            edge.target === targetId,
         );
         if (exists) {
           return current;
@@ -2156,8 +2083,8 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
         return [
           ...current,
           makeFlowEdge(
-            connection.source,
-            connection.target,
+            sourceId,
+            targetId,
             "planned",
             sourceHandle,
             targetHandle,
@@ -2333,19 +2260,10 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       return;
     }
 
-    if (selectedNodeIds.length >= nodes.length) {
-      pushLog({
-        level: "warning",
-        title: "Delete blocked",
-        body: "Keep at least one node on the board so the inspector and runner stay anchored.",
-      });
-      return;
-    }
-
     const selectedNodesSet = new Set(selectedNodeIds);
     const selectedEdgesSet = new Set(selectedEdgeIds);
     const remainingNodes = nodes.filter((node) => !selectedNodesSet.has(node.id));
-    const nextSelectedId = remainingNodes[0]?.id || initialNodes[0].id;
+    const nextSelectedId = remainingNodes[0]?.id || "";
 
     setNodes(remainingNodes.map((node) => ({ ...node, selected: node.id === nextSelectedId })));
     setEdges((current) =>
@@ -2357,7 +2275,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       ),
     );
     setSelectedNodeId(nextSelectedId);
-    setSelectedNodeIds([nextSelectedId]);
+    setSelectedNodeIds(nextSelectedId ? [nextSelectedId] : []);
     setSelectedEdgeIds([]);
     pushLog({
       level: "info",
@@ -2371,7 +2289,15 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   }
 
   function duplicateSelectedNodes() {
-    const sourceNodes = selectedNodes.length > 0 ? selectedNodes : [selectedNode];
+    const sourceNodes = selectedNodes.length > 0 ? selectedNodes : selectedNode ? [selectedNode] : [];
+    if (sourceNodes.length === 0) {
+      pushLog({
+        level: "warning",
+        title: "Duplicate skipped",
+        body: "There are no nodes on the board to duplicate.",
+      });
+      return;
+    }
     const timestamp = Date.now();
     const duplicates = sourceNodes.map((node, index) => ({
       ...node,
@@ -2403,33 +2329,24 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   }
 
   function resetBoard() {
-    const restoredNodes = initialNodes.map((node, index) => ({
-      ...node,
-      selected: index === 0,
-      data: {
-        ...node.data,
-        status: index < 2 ? "success" as const : "ready" as const,
-        config: { ...node.data.config },
-        inputs: { ...node.data.inputs },
-        outputs: {},
-        lastRun: undefined,
-      },
-    }));
-
-    setNodes(restoredNodes);
-    setEdges(initialEdges.map((edge) => ({ ...edge, selected: false })));
-    setSelectedNodeId(restoredNodes[0].id);
-    setSelectedNodeIds([restoredNodes[0].id]);
+    setNodes([]);
+    setEdges([]);
+    setSelectedNodeId("");
+    setSelectedNodeIds([]);
     setSelectedEdgeIds([]);
     setFlowConnectMode(false);
     pushLog({
       level: "info",
       title: "Board reset",
-      body: "Visual board restored to the default Portaldot workflow template.",
+      body: "Visual board cleared. Add nodes from the palette to build a new workflow.",
     });
   }
 
   function updateConfig(key: keyof PortalNodeConfig, value: string) {
+    if (!selectedNode) {
+      return;
+    }
+
     setNodes((current) =>
       current.map((node) =>
         node.id === selectedNode.id
@@ -2576,6 +2493,14 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   }
 
   async function runSelectedNode() {
+    if (!selectedNode) {
+      pushLog({
+        level: "warning",
+        title: "Run skipped",
+        body: "No node is selected because the board is empty.",
+      });
+      return;
+    }
     await runNode(selectedNode);
   }
 
@@ -2600,6 +2525,14 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   }
 
   async function runFromSelectedNode() {
+    if (!selectedNode) {
+      pushLog({
+        level: "warning",
+        title: "Run from node skipped",
+        body: "No node is selected because the board is empty.",
+      });
+      return;
+    }
     const graphOrderedNodes = workflowSequenceFromGraph(nodes, edges);
     const selectedIndex = graphOrderedNodes.findIndex((node) => node.id === selectedNode.id);
     const batch = graphOrderedNodes.slice(Math.max(selectedIndex, 0));
@@ -2684,11 +2617,12 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
         </div>
         <div className="topbar__actions">
           <button className="text-button quiet" title="Back to homepage" onClick={onOpenHome}>
+            <Home size={17} />
             Home
           </button>
-          <button className={`text-button quiet ${beginnerMode ? "active-mode" : ""}`} onClick={() => setBeginnerMode((value) => !value)}>
+          {/* <button className={`text-button quiet ${beginnerMode ? "active-mode" : ""}`} onClick={() => setBeginnerMode((value) => !value)}>
             Beginner mode
-          </button>
+          </button> */}
           <button className="text-button" title="Run selected node" onClick={runSelectedNode}>
             <Play size={17} />
             Run node
@@ -2840,30 +2774,38 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
               <Settings2 size={18} />
               Inspector
             </span>
-            <span className={`panel-status ${selectedNode.data.status}`}>{selectedNode.data.status}</span>
+            <span className={`panel-status ${selectedNode?.data.status || "idle"}`}>
+              {selectedNode?.data.status || "idle"}
+            </span>
           </div>
 
           <div className="inspector-card">
-            <div className="inspector-title">{selectedNode.data.label}</div>
-            <div className="inspector-description">{selectedNode.data.description}</div>
-            <div className="field-stack">
-              {configEntries(selectedNode.data.config)
-                .filter(([key]) => showAdvancedFields || !advancedConfigKeys.has(key))
-                .map(([key, value]) => (
-                  <label key={key} className="field">
-                    <span>{key}</span>
-                    <input value={String(value)} onChange={(event) => updateConfig(key as keyof PortalNodeConfig, event.target.value)} />
-                  </label>
-                ))}
-              {configEntries(selectedNode.data.config).length === 0 ? (
-                <div className="empty-note">This node has no editable fields.</div>
-              ) : null}
-              {configEntries(selectedNode.data.config).some(([key]) => advancedConfigKeys.has(key)) ? (
-                <button className="advanced-toggle" onClick={() => setShowAdvancedFields((value) => !value)}>
-                  {showAdvancedFields ? "Hide advanced fields" : "Show advanced fields"}
-                </button>
-              ) : null}
-            </div>
+            {selectedNode ? (
+              <>
+                <div className="inspector-title">{selectedNode.data.label}</div>
+                <div className="inspector-description">{selectedNode.data.description}</div>
+                <div className="field-stack">
+                  {configEntries(selectedNode.data.config)
+                    .filter(([key]) => showAdvancedFields || !advancedConfigKeys.has(key))
+                    .map(([key, value]) => (
+                      <label key={key} className="field">
+                        <span>{key}</span>
+                        <input value={String(value)} onChange={(event) => updateConfig(key as keyof PortalNodeConfig, event.target.value)} />
+                      </label>
+                    ))}
+                  {configEntries(selectedNode.data.config).length === 0 ? (
+                    <div className="empty-note">This node has no editable fields.</div>
+                  ) : null}
+                  {configEntries(selectedNode.data.config).some(([key]) => advancedConfigKeys.has(key)) ? (
+                    <button className="advanced-toggle" onClick={() => setShowAdvancedFields((value) => !value)}>
+                      {showAdvancedFields ? "Hide advanced fields" : "Show advanced fields"}
+                    </button>
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <div className="empty-note">The board is empty. Drag a node from the palette to begin.</div>
+            )}
           </div>
 
           {beginnerMode ? (
@@ -2881,7 +2823,9 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
             <Code2 size={17} />
             <span>Command</span>
           </div>
-          <pre className="command-preview">{hydrateCommand(selectedNode.data.command, selectedNode.data.config, endpoint)}</pre>
+          <pre className="command-preview">
+            {selectedNode ? hydrateCommand(selectedNode.data.command, selectedNode.data.config, endpoint) : "No node selected"}
+          </pre>
 
           <div className="panel-heading small">
             <Server size={17} />
@@ -2902,7 +2846,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
             </strong>
           </div>
 
-          {beginnerMode ? (
+          {/* {beginnerMode ? (
             <div className="setup-checklist">
               <div className="panel-heading small">
                 <ClipboardList size={17} />
@@ -2915,7 +2859,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
                 </div>
               ))}
             </div>
-          ) : null}
+          ) : null} */}
         </aside>
       </section>
 
@@ -2927,8 +2871,10 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
           </div>
           <div className="terminal-panel__meta">
             <span>{runLogs.length} entries</span>
-            <span>{selectedNode.data.label}</span>
-            <span className={`terminal-status ${selectedNode.data.status}`}>{selectedNode.data.status}</span>
+            <span>{selectedNode?.data.label || "No node selected"}</span>
+            <span className={`terminal-status ${selectedNode?.data.status || "idle"}`}>
+              {selectedNode?.data.status || "idle"}
+            </span>
           </div>
         </div>
         <div className="terminal-screen">

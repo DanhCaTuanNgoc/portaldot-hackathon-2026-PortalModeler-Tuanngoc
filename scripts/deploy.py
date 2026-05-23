@@ -269,7 +269,7 @@ def main() -> None:
     call_function = portaldot.get_metadata_call_function("Contracts", "instantiate_with_code")
     call_arg_names = set(call_field_names(call_function))
     uses_weight_v2 = "endowment" not in call_arg_names
-    allow_legacy_fallback = args.legacy_no_selector or (not uses_weight_v2 and metadata_version(code.metadata.metadata_dict) < 5)
+    allow_legacy_fallback = args.legacy_no_selector or uses_weight_v2 or metadata_version(code.metadata.metadata_dict) < 5
     payload_variants = constructor_payload_variants(constructor_data, allow_legacy_fallback)
 
     last_error: Exception | None = None
