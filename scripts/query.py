@@ -4,6 +4,9 @@ import argparse
 
 from common import add_common_args, connect, keypair_from_seed, print_json, run_cli
 
+PORTALDOT_TOKEN_SYMBOL = "POT"
+PORTALDOT_TOKEN_DECIMALS = 14
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Query Portaldot chain/account state.")
@@ -18,14 +21,19 @@ def main() -> None:
     print(f"Connected chain: {portaldot.chain}")
     print(f"Endpoint: {args.url}")
     print(f"Account: {account}")
-    print(f"Token: {portaldot.properties.get('tokenSymbol', 'UNIT')}")
+
+    token_symbol = portaldot.properties.get("tokenSymbol") or PORTALDOT_TOKEN_SYMBOL
+    token_decimals = int(portaldot.properties.get("tokenDecimals") or PORTALDOT_TOKEN_DECIMALS)
+
+    print(f"Token: {token_symbol}")
+    if not portaldot.properties.get("tokenSymbol") or not portaldot.properties.get("tokenDecimals"):
+        print("Token source: Portaldot docs default; local system_properties did not expose token metadata.")
 
     result = portaldot.query("System", "Account", [account])
     print_json("System.Account", result.value)
 
-    decimals = int(portaldot.properties.get("tokenDecimals", 14))
     free = int(result.value["data"]["free"])
-    print(f"Free balance: {free / 10**decimals:.6f} {portaldot.properties.get('tokenSymbol', 'POT')}")
+    print(f"Free balance: {free / 10**token_decimals:.6f} {token_symbol}")
 
 
 if __name__ == "__main__":

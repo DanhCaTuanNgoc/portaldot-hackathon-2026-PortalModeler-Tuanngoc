@@ -1,7 +1,7 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import net from "node:net";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -129,13 +129,21 @@ function commandForNode(kind: string, config: Record<string, string | undefined>
   const endpoint = config.endpoint || "ws://127.0.0.1:9944";
   const fee = config.fee || "100000000000000";
   const value = config.value || "100000000000000";
+  const message = config.message || config.action || "is_member";
+  const recipient = config.account || config.recipient || "";
 
-  if (kind === "chainConnect") return { command: "python", args: ["scripts/doctor.py", "--url", endpoint] };
-  if (kind === "balanceQuery") return { command: "python", args: ["scripts/query.py", "--url", endpoint] };
-  if (kind === "joinMembership") return { command: "python", args: ["scripts/call.py", "--url", endpoint, "--action", "join", "--value", value] };
-  if (kind === "deployMembership") return { command: "python", args: ["scripts/deploy.py", "--url", endpoint, "--fee", fee] };
-  if (kind === "checkIsMember") return { command: "python", args: ["scripts/call.py", "--url", endpoint, "--action", "is_member"] };
-  if (kind === "readJoinedAt") return { command: "python", args: ["scripts/call.py", "--url", endpoint, "--action", "joined_at"] };
+  if (kind === "connectRpc" || kind === "checkRuntime") return { command: "python", args: ["scripts/doctor.py", "--url", endpoint] };
+  if (kind === "checkBalance") return { command: "python", args: ["scripts/query.py", "--url", endpoint] };
+  if (kind === "transferPot") {
+    const args = ["scripts/transfer.py", "--url", endpoint, "--amount", value];
+    if (recipient) args.push("--to", recipient);
+    return { command: "python", args };
+  }
+  if (kind === "buildContract") return { command: "cargo", args: ["contract", "build", "--release"], cwd: resolve(repoRoot, config.contractDir || "contract") };
+  if (kind === "deployContract") return { command: "python", args: ["scripts/deploy.py", "--url", endpoint, "--fee", fee] };
+  if (kind === "verifyContractLive") return { command: "python", args: ["scripts/call.py", "--url", endpoint, "--action", "join_fee"] };
+  if (kind === "readMessage") return { command: "python", args: ["scripts/call.py", "--url", endpoint, "--action", message] };
+  if (kind === "callMessage") return { command: "python", args: ["scripts/call.py", "--url", endpoint, "--action", message, "--value", value] };
   return null;
 }
 
@@ -178,29 +186,73 @@ export default defineConfig({
             const kind = payload.kind || "";
             const config = payload.config || {};
 
-            if (kind === "accountSelect") {
+            if (kind === "checkAccount") {
               sendJson(response, 200, { ok: true, command: "PORTALDOT_SEED=//Alice", stdout: `Signer seed: ${config.seed || "//Alice"}\n`, stderr: "" });
               return;
             }
 
-            if (kind === "artifactSelect") {
+            if (kind === "loadArtifact") {
               const metadataPath = resolve(repoRoot, config.metadataPath || "contract/target/ink/membership.json");
               const wasmPath = resolve(repoRoot, config.wasmPath || "contract/target/ink/membership.wasm");
+              const metadataExists = existsSync(metadataPath);
+              const wasmExists = existsSync(wasmPath);
+              let metadataParsed = false;
+              let messageCount = 0;
+              let eventCount = 0;
+              let parseError = "";
+
+              if (metadataExists) {
+                try {
+                  const metadata = JSON.parse(readFileSync(metadataPath, "utf8")) as {
+                    spec?: {
+                      messages?: unknown[];
+                      events?: unknown[];
+                    };
+                  };
+                  metadataParsed = true;
+                  messageCount = metadata.spec?.messages?.length || 0;
+                  eventCount = metadata.spec?.events?.length || 0;
+                } catch (error) {
+                  parseError = error instanceof Error ? error.message : String(error);
+                }
+              }
+
+              const wasmSize = wasmExists ? statSync(wasmPath).size : 0;
+              const ok = metadataExists && wasmExists && metadataParsed && messageCount > 0 && wasmSize > 0;
               sendJson(response, 200, {
-                ok: existsSync(metadataPath) && existsSync(wasmPath),
+                ok,
                 command: "artifact check",
-                stdout: `metadata: ${existsSync(metadataPath) ? "ready" : "missing"}\nwasm: ${existsSync(wasmPath) ? "ready" : "missing"}\n`,
+                stdout: [
+                  `metadata: ${metadataExists ? "ready" : "missing"}`,
+                  `metadata parse: ${metadataParsed ? "ok" : "failed"}`,
+                  `messages: ${messageCount}`,
+                  `events: ${eventCount}`,
+                  `wasm: ${wasmExists ? "ready" : "missing"}`,
+                  `wasm bytes: ${wasmSize}`,
+                ].join("\n"),
+                stderr: parseError,
+              });
+              return;
+            }
+
+            if (kind === "attachContract") {
+              const addressPath = resolve(repoRoot, "contract-address.txt");
+              const address = config.contractAddress || (existsSync(addressPath) ? readFileSync(addressPath, "utf8").trim() : "");
+              sendJson(response, 200, {
+                ok: Boolean(address),
+                command: "attach contract",
+                stdout: address ? `Attached contract address: ${address}\n` : "No contract address provided.\n",
                 stderr: "",
               });
               return;
             }
 
-            if (kind === "eventViewer" || kind === "commandExport") {
+            if (["watchEvents", "decodeEvents", "exportWorkflow", "exportCommands", "saveWorkflow", "loadWorkflow", "generateReport"].includes(kind)) {
               sendJson(response, 200, { ok: true, command: kind, stdout: `${kind} is generated in the browser.\n`, stderr: "" });
               return;
             }
 
-            if (kind === "deployMembership" && (await contractLive(config.endpoint || "ws://127.0.0.1:9944"))) {
+            if (kind === "deployContract" && (await contractLive(config.endpoint || "ws://127.0.0.1:9944"))) {
               sendJson(response, 200, {
                 ok: true,
                 command: "python scripts/deploy.py",
@@ -210,7 +262,7 @@ export default defineConfig({
               return;
             }
 
-            if (kind === "joinMembership") {
+            if (kind === "callMessage" && (config.message || "join") === "join") {
               const memberCheck = await runProcess("python", ["scripts/call.py", "--url", config.endpoint || "ws://127.0.0.1:9944", "--action", "is_member"]);
               if (memberCheck.ok && (memberCheck.stdout.includes('"Ok": true') || memberCheck.stdout.includes("'Ok': True"))) {
                 sendJson(response, 200, {
@@ -229,7 +281,7 @@ export default defineConfig({
               return;
             }
 
-            sendJson(response, 200, await runProcess(safeCommand.command, safeCommand.args));
+            sendJson(response, 200, await runProcess(safeCommand.command, safeCommand.args, safeCommand.cwd));
           } catch (error) {
             sendJson(response, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
           }

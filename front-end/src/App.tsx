@@ -21,6 +21,7 @@ import {
   Server,
   Settings2,
   Shield,
+  RefreshCcw,
   Trash2,
   UserRound,
   WalletCards,
@@ -29,27 +30,63 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent
 import portalLogo from "./assets/logo_portalmodeler.png";
 
 type PortalNodeKind =
-  | "chainConnect"
-  | "accountSelect"
-  | "balanceQuery"
-  | "artifactSelect"
-  | "deployMembership"
-  | "joinMembership"
-  | "checkIsMember"
-  | "readJoinedAt"
-  | "eventViewer"
-  | "commandExport";
+  | "connectRpc"
+  | "checkRuntime"
+  | "checkAccount"
+  | "checkBalance"
+  | "buildContract"
+  | "loadArtifact"
+  | "deployContract"
+  | "attachContract"
+  | "verifyContractLive"
+  | "transferPot"
+  | "readMessage"
+  | "callMessage"
+  | "watchEvents"
+  | "decodeEvents"
+  | "exportWorkflow"
+  | "exportCommands"
+  | "saveWorkflow"
+  | "loadWorkflow"
+  | "generateReport";
+
+type NodeStatus =
+  | "idle"
+  | "blocked"
+  | "ready"
+  | "running"
+  | "success"
+  | "warning"
+  | "error";
 
 type PortalNodeConfig = {
   endpoint?: string;
   seed?: string;
   account?: string;
+  recipient?: string;
   fee?: string;
   value?: string;
   action?: string;
+  contractDir?: string;
+  constructorName?: string;
+  constructorArgs?: string;
+  message?: string;
+  args?: string;
+  gasLimit?: string;
+  contractAddress?: string;
   metadataPath?: string;
   wasmPath?: string;
   eventName?: string;
+};
+
+type NodeLastRun = {
+  startedAt: string;
+  endedAt?: string;
+  ok: boolean;
+  stdout?: string;
+  stderr?: string;
+  errorCode?: string;
+  hints?: string[];
 };
 
 type PortalNodeData = {
@@ -57,8 +94,12 @@ type PortalNodeData = {
   label: string;
   description: string;
   command: string;
-  status: "ready" | "running" | "success" | "warning" | "error";
+  status: NodeStatus;
   config: PortalNodeConfig;
+  inputs: Record<string, unknown>;
+  outputs: Record<string, unknown>;
+  dependsOn: string[];
+  lastRun?: NodeLastRun;
 } & Record<string, unknown>;
 
 type XYPosition = {
@@ -94,6 +135,7 @@ type Connection = {
 
 type Template = {
   kind: PortalNodeKind;
+  group: "Environment" | "Contract Lifecycle" | "Interaction" | "Utility";
   label: string;
   description: string;
   command: string;
@@ -159,6 +201,47 @@ type Guidance = {
   level: "ready" | "warning" | "blocked";
   title: string;
   items: string[];
+};
+
+type ValidationResult = {
+  ok: boolean;
+  reasons: string[];
+  hints?: string[];
+  warnings?: string[];
+};
+
+type WorkflowContext = {
+  nodes: PortalFlowNode[];
+  edges: Edge[];
+  health: HealthState | null;
+  snapshot: ChainSnapshot | null;
+  endpoint?: string;
+};
+
+type ExecuteResult = {
+  ok: boolean;
+  result: ApiRunResult;
+  outputs: Record<string, unknown>;
+};
+
+type RunNodeOutcome = {
+  ok: boolean;
+  status: NodeStatus;
+  outputs?: Record<string, unknown>;
+  health?: HealthState | null;
+  snapshot?: ChainSnapshot | null;
+};
+
+type NodeDependencyRule = {
+  kinds: PortalNodeKind[];
+  mode?: "all" | "any";
+  reason: string;
+  blocking?: boolean;
+};
+
+type NodeValidationRule = {
+  dependencies: NodeDependencyRule[];
+  validate?: (node: PortalFlowNode, context: WorkflowContext) => ValidationResult;
 };
 
 const futurePlanItems = [
@@ -241,38 +324,81 @@ const heroVideoUrl =
 
 const heroPartners = ["Portaldot", "Substrate", "ink!", "Vite", "React Flow", "Local Node"];
 
-const advancedConfigKeys = new Set(["account", "metadataPath", "wasmPath", "eventName"]);
+const advancedConfigKeys = new Set([
+  "account",
+  "metadataPath",
+  "wasmPath",
+  "eventName",
+  "constructorArgs",
+  "args",
+  "gasLimit",
+  "contractAddress",
+]);
 
 const templates: Template[] = [
   {
-    kind: "chainConnect",
-    label: "Chain Connect",
-    description: "Local websocket and network profile",
+    kind: "connectRpc",
+    group: "Environment",
+    label: "Connect RPC",
+    description: "Validate websocket endpoint and chain access",
     command: "python scripts/doctor.py --url {endpoint}",
     config: { endpoint: "ws://127.0.0.1:9944" },
     icon: Server,
   },
   {
-    kind: "accountSelect",
-    label: "Account Select",
+    kind: "checkRuntime",
+    group: "Environment",
+    label: "Check Runtime",
+    description: "Confirm contracts runtime support",
+    command: "python scripts/doctor.py --url {endpoint}",
+    config: {},
+    icon: RadioTower,
+  },
+  {
+    kind: "checkAccount",
+    group: "Environment",
+    label: "Check Account",
     description: "Signer seed and SS58 account",
     command: "PORTALDOT_SEED={seed}",
     config: { seed: "//Alice", account: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY" },
     icon: UserRound,
   },
   {
-    kind: "balanceQuery",
-    label: "Balance Query",
+    kind: "checkBalance",
+    group: "Environment",
+    label: "Check Balance",
     description: "Read signer balance from System.Account",
     command: "python scripts/query.py --url {endpoint}",
     config: {},
     icon: WalletCards,
   },
   {
-    kind: "artifactSelect",
-    label: "Artifact Select",
-    description: "Membership metadata and Wasm output",
+    kind: "transferPot",
+    group: "Interaction",
+    label: "Transfer POT",
+    description: "Submit a small local POT transfer and show fee evidence",
+    command: "python scripts/transfer.py --url {endpoint} --amount {value}",
+    config: {
+      value: "1000000000000",
+      recipient: "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+    },
+    icon: ArrowRight,
+  },
+  {
+    kind: "buildContract",
+    group: "Contract Lifecycle",
+    label: "Build Contract",
     command: "cd contract && cargo contract build --release",
+    description: "Compile the local ink! contract artifacts",
+    config: { contractDir: "contract" },
+    icon: HardDrive,
+  },
+  {
+    kind: "loadArtifact",
+    group: "Contract Lifecycle",
+    label: "Load Artifact",
+    description: "Load metadata and Wasm without assuming Membership",
+    command: "load artifact {metadataPath} {wasmPath}",
     config: {
       metadataPath: "contract/target/ink/membership.json",
       wasmPath: "contract/target/ink/membership.wasm",
@@ -280,52 +406,112 @@ const templates: Template[] = [
     icon: FileCode2,
   },
   {
-    kind: "deployMembership",
-    label: "Deploy Membership",
-    description: "Instantiate Membership with join fee",
+    kind: "deployContract",
+    group: "Contract Lifecycle",
+    label: "Deploy Contract",
+    description: "Instantiate contract with constructor, value, and gas checks",
     command: "python scripts/deploy.py --url {endpoint} --fee {fee}",
-    config: { fee: "100000000000000" },
-    icon: HardDrive,
+    config: { constructorName: "new", constructorArgs: "{}", fee: "100000000000000", value: "0" },
+    icon: Download,
   },
   {
-    kind: "joinMembership",
-    label: "Join Membership",
-    description: "Execute payable join()",
-    command: "python scripts/call.py --url {endpoint} --action join --value {value}",
-    config: { value: "100000000000000", action: "join" },
-    icon: Shield,
+    kind: "attachContract",
+    group: "Contract Lifecycle",
+    label: "Attach Contract",
+    description: "Attach an existing address to loaded metadata",
+    command: "attach contract {contractAddress}",
+    config: { contractAddress: "" },
+    icon: Link2,
   },
   {
-    kind: "checkIsMember",
-    label: "Check Is Member",
-    description: "Read is_member(account)",
-    command: "python scripts/call.py --url {endpoint} --action is_member",
-    config: { action: "is_member" },
+    kind: "verifyContractLive",
+    group: "Contract Lifecycle",
+    label: "Verify Contract",
+    description: "Check that the address exists on the current chain",
+    command: "python scripts/call.py --url {endpoint} --action join_fee",
+    config: {},
     icon: SearchCheck,
   },
   {
-    kind: "readJoinedAt",
-    label: "Read Joined At",
-    description: "Read joined_at(account)",
-    command: "python scripts/call.py --url {endpoint} --action joined_at",
-    config: { action: "joined_at" },
-    icon: ClipboardList,
+    kind: "readMessage",
+    group: "Interaction",
+    label: "Read Message",
+    description: "Run a read-only contract message",
+    command: "python scripts/call.py --url {endpoint} --action {message}",
+    config: { message: "is_member", args: "{}" },
+    icon: SearchCheck,
   },
   {
-    kind: "eventViewer",
-    label: "Event Viewer",
-    description: "Expected decoded contract event",
-    command: "MemberJoined(account, joined_at, paid)",
+    kind: "callMessage",
+    group: "Interaction",
+    label: "Call Message",
+    description: "Submit a state-changing contract message",
+    command: "python scripts/call.py --url {endpoint} --action {message} --value {value}",
+    config: { message: "join", args: "{}", value: "100000000000000", gasLimit: "" },
+    icon: Shield,
+  },
+  {
+    kind: "watchEvents",
+    group: "Interaction",
+    label: "Watch Events",
+    description: "Track contract and system events for this address",
+    command: "watch events {eventName}",
     config: { eventName: "MemberJoined" },
     icon: RadioTower,
   },
   {
-    kind: "commandExport",
-    label: "Command Export",
-    description: "Export graph commands and checklist",
+    kind: "decodeEvents",
+    group: "Interaction",
+    label: "Decode Events",
+    description: "Decode observed contract events from metadata",
+    command: "decode events from metadata",
+    config: {},
+    icon: ClipboardList,
+  },
+  {
+    kind: "exportWorkflow",
+    group: "Utility",
+    label: "Export Workflow",
+    description: "Export nodes, edges, configs, and optional outputs",
+    command: "portalmodeler export --format json",
+    config: {},
+    icon: GitBranch,
+  },
+  {
+    kind: "exportCommands",
+    group: "Utility",
+    label: "Export Commands",
+    description: "Generate runnable CLI commands from the board",
     command: "portalmodeler export --format markdown",
     config: {},
     icon: Download,
+  },
+  {
+    kind: "saveWorkflow",
+    group: "Utility",
+    label: "Save Workflow",
+    description: "Save workflow JSON without private seeds by default",
+    command: "portalmodeler save workflow",
+    config: {},
+    icon: Save,
+  },
+  {
+    kind: "loadWorkflow",
+    group: "Utility",
+    label: "Load Workflow",
+    description: "Load a saved workflow JSON",
+    command: "portalmodeler load workflow",
+    config: {},
+    icon: FileText,
+  },
+  {
+    kind: "generateReport",
+    group: "Utility",
+    label: "Generate Report",
+    description: "Create a workflow run summary for sharing",
+    command: "portalmodeler report",
+    config: {},
+    icon: ClipboardList,
   },
 ];
 
@@ -357,6 +543,9 @@ const initialNodes: PortalFlowNode[] = templates.map((template, index) => ({
     command: template.command,
     status: index < 2 ? "success" : "ready",
     config: template.config,
+    inputs: { ...template.config },
+    outputs: {},
+    dependsOn: index === 0 ? [] : [templates[index - 1].kind],
   },
 }));
 
@@ -439,7 +628,13 @@ function hydrateCommand(template: string, config: PortalNodeConfig, endpoint = "
     .replace("{endpoint}", config.endpoint || endpoint)
     .replace("{seed}", config.seed || "//Alice")
     .replace("{fee}", config.fee || "100000000000000")
-    .replace("{value}", config.value || "100000000000000");
+    .replace("{value}", config.value || "100000000000000")
+    .replace("{recipient}", config.recipient || config.account || "<recipient>")
+    .replace("{metadataPath}", config.metadataPath || "contract/target/ink/membership.json")
+    .replace("{wasmPath}", config.wasmPath || "contract/target/ink/membership.wasm")
+    .replace("{contractAddress}", config.contractAddress || "<contract-address>")
+    .replace("{eventName}", config.eventName || "MemberJoined")
+    .replace("{message}", config.message || config.action || "is_member");
 }
 
 type PortalNodeCardProps = {
@@ -973,6 +1168,455 @@ function workflowSequenceFromGraph(nodes: PortalFlowNode[], edges: Edge[]) {
   return [...sequence, ...byFallback.filter((node) => !visited.has(node.id))];
 }
 
+function dependencyIdsForNode(node: PortalFlowNode, context: WorkflowContext) {
+  const explicit = node.data.dependsOn || [];
+  const incoming = context.edges
+    .filter((edge) => edge.target === node.id)
+    .map((edge) => edge.source);
+
+  return Array.from(new Set([...explicit, ...incoming])).filter((id) =>
+    context.nodes.some((candidate) => candidate.id === id),
+  );
+}
+
+function dependencyOutputsForNode(node: PortalFlowNode, context: WorkflowContext) {
+  return dependencyIdsForNode(node, context).reduce<Record<string, unknown>>((outputs, dependencyId) => {
+    const dependencyNode = context.nodes.find((candidate) => candidate.id === dependencyId);
+    if (!dependencyNode) {
+      return outputs;
+    }
+
+    return {
+      ...outputs,
+      [dependencyId]: dependencyNode.data.outputs || {},
+    };
+  }, {});
+}
+
+const workflowValidationRules: Partial<Record<PortalNodeKind, NodeValidationRule>> = {
+  connectRpc: {
+    dependencies: [],
+    validate: (node) => {
+      const reasons: string[] = [];
+      const warnings: string[] = [];
+
+      if (!node.data.config.endpoint) {
+        reasons.push("RPC endpoint is required.");
+      } else if (!/^wss?:\/\//.test(node.data.config.endpoint)) {
+        reasons.push("RPC endpoint must start with ws:// or wss://.");
+      } else if (!isLocalEndpoint(node.data.config.endpoint)) {
+        warnings.push("Connected endpoint is not the default local profile.");
+      }
+
+      return { ok: reasons.length === 0, reasons, warnings };
+    },
+  },
+  checkRuntime: {
+    dependencies: [{ kinds: ["connectRpc"], reason: "Check Runtime requires a successful Connect RPC node." }],
+  },
+  checkAccount: {
+    dependencies: [],
+    validate: (node) => {
+      const reasons: string[] = [];
+      const warnings: string[] = [];
+
+      if (!node.data.config.seed && !node.data.config.account) {
+        reasons.push("A seed or selected account is required.");
+      }
+      if (node.data.config.account && node.data.config.account.length < 32) {
+        warnings.push("Selected account looks shorter than an SS58 address.");
+      }
+
+      return { ok: reasons.length === 0, reasons, warnings };
+    },
+  },
+  checkBalance: {
+    dependencies: [
+      { kinds: ["connectRpc"], reason: "Check Balance requires a successful Connect RPC node." },
+      { kinds: ["checkAccount"], reason: "Check Balance requires a successful Check Account node." },
+    ],
+  },
+  transferPot: {
+    dependencies: [
+      { kinds: ["connectRpc"], reason: "Transfer POT requires a successful Connect RPC node." },
+      { kinds: ["checkAccount"], reason: "Transfer POT requires a successful Check Account node." },
+      { kinds: ["checkBalance"], reason: "Transfer POT requires a successful Check Balance node." },
+    ],
+    validate: (node, context) => {
+      const reasons: string[] = [];
+      const hints: string[] = [];
+
+      if (!context.health?.rpcReachable) {
+        reasons.push("RPC endpoint is offline.");
+        hints.push("Start the local node at ws://127.0.0.1:9944, then refresh local health.");
+      }
+      if (!isNumericString(node.data.config.value)) {
+        reasons.push("Transfer amount must be a base-unit integer.");
+      }
+      if (!node.data.config.recipient) {
+        reasons.push("Recipient account is required.");
+      }
+      if (!context.snapshot?.account.freeBalance) {
+        hints.push("Run Check Balance first so fee and balance evidence are visible.");
+      }
+
+      return { ok: reasons.length === 0, reasons, hints };
+    },
+  },
+  buildContract: {
+    dependencies: [],
+    validate: (node) => {
+      const reasons: string[] = [];
+      const warnings: string[] = [];
+
+      if (!node.data.config.contractDir) {
+        reasons.push("Contract directory is required.");
+      } else if (!["contract", "./contract"].includes(node.data.config.contractDir)) {
+        warnings.push("Contract directory is custom. Build may fail if Cargo.toml is not present there.");
+      }
+
+      return { ok: reasons.length === 0, reasons, warnings };
+    },
+  },
+  loadArtifact: {
+    dependencies: [
+      {
+        kinds: ["buildContract"],
+        mode: "any",
+        reason: "Load Artifact needs a successful Build Contract node or explicit metadata/Wasm paths.",
+        blocking: false,
+      },
+    ],
+    validate: (node, context) => {
+      const reasons: string[] = [];
+      const warnings: string[] = [];
+
+      if (!node.data.config.metadataPath) {
+        reasons.push("Metadata JSON path is required.");
+      }
+      if (!node.data.config.wasmPath) {
+        reasons.push("Wasm path is required.");
+      }
+      if (!context.health?.artifactsReady) {
+        warnings.push("Artifact files are not marked ready yet. Run Load Artifact to verify paths.");
+      }
+
+      return { ok: reasons.length === 0, reasons, warnings };
+    },
+  },
+  deployContract: {
+    dependencies: [
+      { kinds: ["connectRpc"], reason: "Deploy Contract requires a successful Connect RPC node." },
+      { kinds: ["checkAccount"], reason: "Deploy Contract requires a successful Check Account node." },
+      { kinds: ["checkBalance"], reason: "Deploy Contract requires a successful Check Balance node." },
+      { kinds: ["loadArtifact"], reason: "Deploy Contract requires a successful Load Artifact node." },
+    ],
+    validate: (node, context) => {
+      const reasons: string[] = [];
+      const hints: string[] = [];
+
+      if (!context.health?.rpcReachable) {
+        reasons.push("RPC endpoint is offline.");
+        hints.push("Start the local node at ws://127.0.0.1:9944, then refresh local health.");
+      }
+      if (!context.health?.artifactsReady) {
+        reasons.push("Contract metadata and Wasm artifacts are missing.");
+        hints.push("Build the contract first with cargo contract build --release.");
+      }
+      if (!node.data.config.constructorName) {
+        reasons.push("Constructor must be selected.");
+      }
+      if (!isNumericString(node.data.config.fee)) {
+        reasons.push("Join fee must be a base-unit integer.");
+      }
+      if (node.data.config.value && !isNumericString(node.data.config.value)) {
+        reasons.push("Deployment value/endowment must be a base-unit integer.");
+      }
+
+      return { ok: reasons.length === 0, reasons, hints };
+    },
+  },
+  attachContract: {
+    dependencies: [
+      { kinds: ["connectRpc"], reason: "Attach Contract requires a successful Connect RPC node." },
+      { kinds: ["loadArtifact"], reason: "Attach Contract requires loaded metadata." },
+    ],
+    validate: (node, context) => {
+      const reasons: string[] = [];
+      const warnings: string[] = [];
+
+      if (!node.data.config.contractAddress && !context.health?.contractAddress) {
+        reasons.push("Contract address is required before attaching.");
+      }
+      if (!context.health?.artifactsReady) {
+        reasons.push("Metadata must be loaded before attaching an existing contract.");
+      }
+      if (context.health?.contractAddress && !context.health.contractReachable) {
+        warnings.push("Address exists locally but is not live on the current chain.");
+      }
+
+      return { ok: reasons.length === 0, reasons, warnings };
+    },
+  },
+  verifyContractLive: {
+    dependencies: [
+      { kinds: ["connectRpc"], reason: "Verify Contract requires a successful Connect RPC node." },
+      { kinds: ["deployContract", "attachContract"], mode: "any", reason: "Verify Contract requires Deploy Contract or Attach Contract first." },
+    ],
+  },
+  readMessage: {
+    dependencies: [
+      { kinds: ["connectRpc"], reason: "Read Message requires a successful Connect RPC node." },
+      { kinds: ["loadArtifact"], reason: "Read Message requires loaded metadata." },
+      { kinds: ["deployContract", "attachContract", "verifyContractLive"], mode: "any", reason: "Read Message requires a live deployed or attached contract." },
+    ],
+    validate: (node, context) => {
+      const reasons: string[] = [];
+
+      if (!context.health?.contractReachable) {
+        reasons.push("A live contract address is required on the current chain.");
+      }
+      if (!node.data.config.message) {
+        reasons.push("Read message must be selected.");
+      }
+
+      return { ok: reasons.length === 0, reasons };
+    },
+  },
+  callMessage: {
+    dependencies: [
+      { kinds: ["connectRpc"], reason: "Call Message requires a successful Connect RPC node." },
+      { kinds: ["loadArtifact"], reason: "Call Message requires loaded metadata." },
+      { kinds: ["checkBalance"], reason: "Call Message requires a successful Check Balance node." },
+      { kinds: ["deployContract", "attachContract", "verifyContractLive"], mode: "any", reason: "Call Message requires a live deployed or attached contract." },
+    ],
+    validate: (node, context) => {
+      const reasons: string[] = [];
+      const hints: string[] = [];
+      const warnings: string[] = [];
+
+      if (!context.health?.contractReachable) {
+        reasons.push("A live contract address is required on the current chain.");
+      }
+      if (!node.data.config.message) {
+        reasons.push("Call message must be selected.");
+      }
+      if (!isNumericString(node.data.config.value)) {
+        reasons.push("Transaction value must be a base-unit integer.");
+      }
+      if (context.snapshot?.state.isMember && (node.data.config.message || "join") === "join") {
+        warnings.push("Signer is already a member. The backend will skip join() to avoid an expected assertion.");
+      }
+      if (!context.snapshot?.account.freeBalance) {
+        hints.push("Account balance could not be read. Run Check Balance before submitting a transaction.");
+      }
+
+      return { ok: reasons.length === 0, reasons, hints, warnings };
+    },
+  },
+  watchEvents: {
+    dependencies: [
+      { kinds: ["connectRpc"], reason: "Watch Events requires a successful Connect RPC node." },
+      { kinds: ["deployContract", "attachContract", "verifyContractLive"], mode: "any", reason: "Watch Events works best after a contract is deployed or attached.", blocking: false },
+    ],
+    validate: (_node, context) => {
+      const warnings: string[] = [];
+
+      if (!context.health?.contractReachable) {
+        warnings.push("No live contract address yet. Event watcher will show expected events only.");
+      }
+
+      return { ok: true, reasons: [], warnings };
+    },
+  },
+  decodeEvents: {
+    dependencies: [
+      { kinds: ["loadArtifact"], reason: "Decode Events requires loaded metadata." },
+      { kinds: ["watchEvents"], reason: "Decode Events requires Watch Events output.", blocking: false },
+    ],
+  },
+  exportWorkflow: { dependencies: [] },
+  exportCommands: { dependencies: [] },
+  saveWorkflow: { dependencies: [] },
+  loadWorkflow: { dependencies: [] },
+  generateReport: { dependencies: [] },
+};
+
+function nodeByKind(context: WorkflowContext, kind: PortalNodeKind) {
+  return context.nodes.find((candidate) => candidate.data.kind === kind);
+}
+
+function nodeSucceeded(node?: PortalFlowNode) {
+  return Boolean(node && (node.data.status === "success" || node.data.status === "warning"));
+}
+
+function validateDependencyRule(rule: NodeDependencyRule, context: WorkflowContext) {
+  const mode = rule.mode || "all";
+  const matched = rule.kinds.map((kind) => nodeByKind(context, kind));
+  const ok =
+    mode === "any"
+      ? matched.some((node) => nodeSucceeded(node))
+      : matched.every((node) => nodeSucceeded(node));
+
+  return {
+    ok,
+    message: rule.reason,
+    blocking: rule.blocking !== false,
+  };
+}
+
+function executableNodeKinds() {
+  return new Set<PortalNodeKind>([
+    "connectRpc",
+    "checkRuntime",
+    "checkAccount",
+    "checkBalance",
+    "transferPot",
+    "buildContract",
+    "loadArtifact",
+    "deployContract",
+    "attachContract",
+    "verifyContractLive",
+    "readMessage",
+    "callMessage",
+    "watchEvents",
+    "decodeEvents",
+    "exportWorkflow",
+    "exportCommands",
+    "saveWorkflow",
+    "loadWorkflow",
+    "generateReport",
+  ]);
+}
+
+function preflightValidate(node: PortalFlowNode, context: WorkflowContext): ValidationResult {
+  const reasons: string[] = [];
+  const hints: string[] = [];
+  const warnings: string[] = [];
+  const rule = workflowValidationRules[node.data.kind];
+  const dependencies = dependencyIdsForNode(node, context)
+    .map((dependencyId) => context.nodes.find((candidate) => candidate.id === dependencyId))
+    .filter(Boolean) as PortalFlowNode[];
+
+  dependencies.forEach((dependency) => {
+    if (dependency.data.status === "error") {
+      reasons.push(`${dependency.data.label} failed. Fix it before running ${node.data.label}.`);
+    } else if (dependency.data.status === "blocked") {
+      reasons.push(`${dependency.data.label} is blocked. Complete its missing inputs first.`);
+    } else if (dependency.data.status !== "success" && dependency.data.status !== "warning") {
+      reasons.push(`${dependency.data.label} has not produced a successful output yet.`);
+    }
+  });
+
+  if (!executableNodeKinds().has(node.data.kind)) {
+    reasons.push(`${node.data.kind} is not supported by the safe runner.`);
+  }
+
+  rule?.dependencies.forEach((dependencyRule) => {
+    const result = validateDependencyRule(dependencyRule, context);
+    if (result.ok) {
+      return;
+    }
+
+    if (result.blocking) {
+      reasons.push(result.message);
+    } else {
+      warnings.push(result.message);
+    }
+  });
+
+  const ruleValidation = rule?.validate?.(node, context);
+  if (ruleValidation) {
+    reasons.push(...ruleValidation.reasons);
+    hints.push(...(ruleValidation.hints || []));
+    warnings.push(...(ruleValidation.warnings || []));
+  }
+
+  return { ok: reasons.length === 0, reasons, hints, warnings };
+}
+
+function collectNodeOutputs(node: PortalFlowNode, result: ApiRunResult, context: WorkflowContext) {
+  const outputs: Record<string, unknown> = {
+    command: result.command || hydrateCommand(node.data.command, node.data.config, context.endpoint),
+    stdout: result.stdout || "",
+  };
+
+  if (node.data.kind === "connectRpc") {
+    outputs.endpoint = node.data.config.endpoint || context.endpoint || "ws://127.0.0.1:9944";
+    outputs.rpcReachable = Boolean(result.ok);
+  }
+  if (node.data.kind === "checkRuntime") {
+    outputs.endpoint = context.endpoint || "ws://127.0.0.1:9944";
+    outputs.rpcReachable = Boolean(result.ok);
+    outputs.contractsPalletAvailable = Boolean(result.ok);
+  }
+  if (node.data.kind === "checkAccount") {
+    outputs.seed = node.data.config.seed || "//Alice";
+    outputs.address = node.data.config.account || "";
+  }
+  if (node.data.kind === "checkBalance") {
+    outputs.freeBalance = context.snapshot?.account.freeBalance || "";
+    outputs.tokenSymbol = context.snapshot?.account.token || "";
+    outputs.nonce = context.snapshot?.account.nonce || "";
+  }
+  if (node.data.kind === "transferPot") {
+    outputs.recipient = node.data.config.recipient || "";
+    outputs.value = node.data.config.value || "";
+    outputs.fee = (result.stdout || "").match(/Estimated fee:\s*(.+)/)?.[1] || "";
+    outputs.extrinsicHash = (result.stdout || "").match(/Extrinsic:\s*(.+)/)?.[1] || "";
+    outputs.blockHash = (result.stdout || "").match(/Block hash:\s*(.+)/)?.[1] || "";
+  }
+  if (node.data.kind === "buildContract") {
+    outputs.metadataPath = "contract/target/ink/membership.json";
+    outputs.wasmPath = "contract/target/ink/membership.wasm";
+    outputs.contractBundlePath = "contract/target/ink/membership.contract";
+    outputs.buildLog = result.stdout || result.stderr || "";
+  }
+  if (node.data.kind === "loadArtifact") {
+    outputs.metadataPath = node.data.config.metadataPath || "contract/target/ink/membership.json";
+    outputs.wasmPath = node.data.config.wasmPath || "contract/target/ink/membership.wasm";
+    outputs.messages = context.snapshot?.contract.messages || [];
+  }
+  if (node.data.kind === "deployContract" || node.data.kind === "attachContract" || node.data.kind === "verifyContractLive") {
+    outputs.contractAddress = context.health?.contractAddress || "";
+    outputs.contractReachable = Boolean(context.health?.contractReachable);
+  }
+  if (node.data.kind === "callMessage") {
+    outputs.message = node.data.config.message || "join";
+    outputs.value = node.data.config.value || "0";
+  }
+  if (node.data.kind === "readMessage") {
+    outputs.message = node.data.config.message || "is_member";
+    outputs.decodedValue = context.snapshot?.state.isMember ?? null;
+  }
+  if (node.data.kind === "watchEvents" || node.data.kind === "decodeEvents") {
+    outputs.eventTimeline = context.snapshot?.events || [];
+  }
+
+  return outputs;
+}
+
+function postValidate(node: PortalFlowNode, executeResult: ExecuteResult, context: WorkflowContext): ValidationResult {
+  const reasons: string[] = [];
+  const warnings: string[] = [];
+
+  if (!executeResult.ok) {
+    reasons.push(`${node.data.label} executed but returned a failure.`);
+  }
+
+  if (executeResult.ok && node.data.kind === "connectRpc" && !executeResult.outputs.rpcReachable) {
+    reasons.push("RPC did not become reachable after Chain Connect.");
+  }
+  if (executeResult.ok && node.data.kind === "deployContract" && context.health?.contractAddress && !context.health.contractReachable) {
+    warnings.push("A contract address exists, but it may be stale for the current chain.");
+  }
+  if (executeResult.ok && node.data.kind === "transferPot" && !String(executeResult.result.stdout || "").includes("ExtrinsicSuccess")) {
+    warnings.push("Transfer completed, but ExtrinsicSuccess was not found in the captured output.");
+  }
+
+  return { ok: reasons.length === 0, reasons, warnings };
+}
+
 function isNumericString(value?: string) {
   return Boolean(value && /^\d+$/.test(value));
 }
@@ -1021,15 +1665,15 @@ function nodeGuidance(
     items.push("This endpoint is not the default local profile. Avoid mainnet while learning or testing.");
   }
 
-  if (node.data.kind !== "chainConnect" && health && !health.rpcReachable) {
+  if (node.data.kind !== "connectRpc" && health && !health.rpcReachable) {
     level = "blocked";
     items.push("RPC is offline. Run the local contracts node before executing this node.");
   }
 
-  if (node.data.kind === "deployMembership") {
+  if (node.data.kind === "deployContract") {
     if (!health?.artifactsReady) {
       level = "blocked";
-      items.push("Membership artifacts are missing. Build the contract first.");
+      items.push("Contract artifacts are missing. Build or load artifacts first.");
     }
     if (!isNumericString(node.data.config.fee)) {
       level = "blocked";
@@ -1037,24 +1681,24 @@ function nodeGuidance(
     }
   }
 
-  if (node.data.kind === "joinMembership") {
+  if (node.data.kind === "callMessage") {
     if (!health?.contractReachable) {
       level = "blocked";
-      items.push("No live contract is reachable on this chain. Deploy first.");
+      items.push("No live contract is reachable on this chain. Deploy or attach first.");
     }
     if (!isNumericString(node.data.config.value)) {
       level = "blocked";
-      items.push("Join value must be a base-unit integer.");
+      items.push("Transaction value must be a base-unit integer.");
     }
     if (snapshot?.state.isMember) {
       level = "warning";
-      items.push("Signer is already a member. The runner will skip join() to avoid an expected assertion.");
+      items.push("Signer is already a member. The demo runner will skip join() to avoid an expected assertion.");
     }
   }
 
-  if (["checkIsMember", "readJoinedAt", "eventViewer"].includes(node.data.kind) && health && !health.contractReachable) {
+  if (["verifyContractLive", "readMessage", "watchEvents", "decodeEvents"].includes(node.data.kind) && health && !health.contractReachable) {
     level = "blocked";
-    items.push("State and events need a live contract address. Deploy Membership first.");
+    items.push("State and events need a live contract address. Deploy or attach a contract first.");
   }
 
   if (items.length === 0) {
@@ -1435,7 +2079,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     () => orderedSelection(nodes, selectedNodeIds),
     [nodes, selectedNodeIds],
   );
-  const endpoint = nodes.find((node) => node.data.kind === "chainConnect")?.data.config.endpoint;
+  const endpoint = nodes.find((node) => node.data.kind === "connectRpc")?.data.config.endpoint;
   const guidance = nodeGuidance(selectedNode, health, snapshot, endpoint);
   const setupChecklist = [
     { label: "Local RPC online", done: Boolean(health?.rpcReachable) },
@@ -1450,7 +2094,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
 
   const commandLines = useMemo(() => {
     return orderedNodes
-      .filter((node) => node.data.kind !== "eventViewer" && node.data.kind !== "commandExport")
+      .filter((node) => !["watchEvents", "decodeEvents", "exportWorkflow", "exportCommands", "saveWorkflow", "loadWorkflow", "generateReport"].includes(node.data.kind))
       .map((node) => hydrateCommand(node.data.command, node.data.config, endpoint));
   }, [endpoint, orderedNodes]);
 
@@ -1464,7 +2108,17 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   const graphExport = useMemo(() => {
     return JSON.stringify(
       {
-        nodes: nodes.map(({ id, position, data }) => ({ id, kind: data.kind, position, config: data.config })),
+        nodes: nodes.map(({ id, position, data }) => ({
+          id,
+          kind: data.kind,
+          position,
+          status: data.status,
+          inputs: data.inputs,
+          outputs: data.outputs,
+          dependsOn: data.dependsOn,
+          config: data.config,
+          lastRun: data.lastRun,
+        })),
         edges: edges.map(({ id, source, target, sourceHandle, targetHandle }) => ({
           id,
           source,
@@ -1561,17 +2215,23 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       const response = await fetch(`/api/health?endpoint=${encodeURIComponent(endpoint || "ws://127.0.0.1:9944")}`);
       const nextHealth = (await response.json()) as HealthState;
       setHealth(nextHealth);
+      return nextHealth;
     } catch {
-      setHealth({ ok: false, rpcReachable: false, contractReachable: false, artifactsReady: false, contractAddress: "" });
+      const fallbackHealth = { ok: false, rpcReachable: false, contractReachable: false, artifactsReady: false, contractAddress: "" };
+      setHealth(fallbackHealth);
+      return fallbackHealth;
     }
   }, [endpoint]);
 
   const refreshSnapshot = useCallback(async () => {
     try {
       const response = await fetch(`/api/snapshot?endpoint=${encodeURIComponent(endpoint || "ws://127.0.0.1:9944")}`);
-      setSnapshot((await response.json()) as ChainSnapshot);
+      const nextSnapshot = (await response.json()) as ChainSnapshot;
+      setSnapshot(nextSnapshot);
+      return nextSnapshot;
     } catch {
       setSnapshot(null);
+      return null;
     }
   }, [endpoint]);
 
@@ -1603,6 +2263,9 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
           command: template.command,
           status: "ready",
           config: template.config,
+          inputs: { ...template.config },
+          outputs: {},
+          dependsOn: [],
         },
       },
     ]);
@@ -1719,6 +2382,9 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
         ...node.data,
         status: "ready" as const,
         config: { ...node.data.config },
+        inputs: { ...node.data.inputs },
+        outputs: {},
+        lastRun: undefined,
       },
     }));
 
@@ -1736,67 +2402,176 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     });
   }
 
+  function resetBoard() {
+    const restoredNodes = initialNodes.map((node, index) => ({
+      ...node,
+      selected: index === 0,
+      data: {
+        ...node.data,
+        status: index < 2 ? "success" as const : "ready" as const,
+        config: { ...node.data.config },
+        inputs: { ...node.data.inputs },
+        outputs: {},
+        lastRun: undefined,
+      },
+    }));
+
+    setNodes(restoredNodes);
+    setEdges(initialEdges.map((edge) => ({ ...edge, selected: false })));
+    setSelectedNodeId(restoredNodes[0].id);
+    setSelectedNodeIds([restoredNodes[0].id]);
+    setSelectedEdgeIds([]);
+    setFlowConnectMode(false);
+    pushLog({
+      level: "info",
+      title: "Board reset",
+      body: "Visual board restored to the default Portaldot workflow template.",
+    });
+  }
+
   function updateConfig(key: keyof PortalNodeConfig, value: string) {
     setNodes((current) =>
       current.map((node) =>
         node.id === selectedNode.id
-          ? { ...node, data: { ...node.data, config: { ...node.data.config, [key]: value } } }
+          ? {
+              ...node,
+              data: {
+                ...node.data,
+                config: { ...node.data.config, [key]: value },
+                inputs: { ...node.data.inputs, [key]: value },
+              },
+            }
           : node,
       ),
     );
   }
 
-  function setNodeStatus(nodeId: string, status: PortalNodeData["status"]) {
+  function setNodeStatus(nodeId: string, status: PortalNodeData["status"], patch?: Partial<PortalNodeData>) {
     setNodes((current) =>
-      current.map((node) => (node.id === nodeId ? { ...node, data: { ...node.data, status } } : node)),
+      current.map((node) => (node.id === nodeId ? { ...node, data: { ...node.data, ...patch, status } } : node)),
     );
   }
 
-  async function runNode(node: PortalFlowNode) {
-    setNodeStatus(node.id, "running");
+  async function execute(node: PortalFlowNode, context: WorkflowContext): Promise<ExecuteResult> {
+    const response = await fetch("/api/run-node", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: node.data.kind,
+        config: {
+          ...node.data.config,
+          ...dependencyOutputsForNode(node, context),
+          endpoint: context.endpoint,
+        },
+      }),
+    });
+    const result = (await response.json()) as ApiRunResult;
+    const ok = response.ok && Boolean(result.ok);
+    return {
+      ok,
+      result,
+      outputs: {},
+    };
+  }
+
+  async function runNode(node: PortalFlowNode, contextOverride?: WorkflowContext): Promise<RunNodeOutcome> {
+    const startedAt = new Date().toISOString();
+    const context = contextOverride || { nodes, edges, health, snapshot, endpoint };
+    const preflight = preflightValidate(node, context);
+
+    if (!preflight.ok) {
+      setNodeStatus(node.id, "blocked", {
+        lastRun: {
+          startedAt,
+          endedAt: new Date().toISOString(),
+          ok: false,
+          errorCode: "PREFLIGHT_BLOCKED",
+          hints: preflight.hints,
+        },
+      });
+      pushLog({
+        level: "warning",
+        title: `${node.data.label} blocked`,
+        body: [
+          `${node.data.label} is blocked because:`,
+          ...preflight.reasons.map((reason) => `- ${reason}`),
+          ...(preflight.hints || []).map((hint) => `Hint: ${hint}`),
+        ].join("\n"),
+      });
+      return { ok: false, status: "blocked" };
+    }
+
+    setNodeStatus(node.id, "running", {
+      inputs: { ...node.data.config, dependencyOutputs: dependencyOutputsForNode(node, context) },
+      lastRun: { startedAt, ok: false },
+    });
     pushLog({
       level: "info",
       title: `Running ${node.data.label}`,
-      body: hydrateCommand(node.data.command, node.data.config, endpoint),
+      body: [
+        hydrateCommand(node.data.command, node.data.config, endpoint),
+        ...(preflight.warnings || []).map((warning) => `Preflight warning: ${warning}`),
+        ...(preflight.hints || []).map((hint) => `Hint: ${hint}`),
+      ].join("\n"),
     });
 
     try {
-      const response = await fetch("/api/run-node", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          kind: node.data.kind,
-          config: { ...node.data.config, endpoint },
-        }),
+      const executed = await execute(node, context);
+      const nextHealth = await refreshHealth();
+      const nextSnapshot = await refreshSnapshot();
+      const refreshedContext = { ...context, health: nextHealth, snapshot: nextSnapshot };
+      const outputs = collectNodeOutputs(node, { ...executed.result, ok: executed.ok }, refreshedContext);
+      executed.outputs = outputs;
+      const postflight = postValidate(node, executed, refreshedContext);
+      const ok = executed.ok && postflight.ok;
+      const hints = explainRunIssue(executed.result);
+      const status: NodeStatus = ok ? (postflight.warnings?.length ? "warning" : "success") : "error";
+
+      setNodeStatus(node.id, status, {
+        outputs,
+        lastRun: {
+          startedAt,
+          endedAt: new Date().toISOString(),
+          ok,
+          stdout: executed.result.stdout,
+          stderr: executed.result.stderr,
+          errorCode: executed.result.code === null || executed.result.code === undefined ? undefined : String(executed.result.code),
+          hints,
+        },
       });
-      const result = (await response.json()) as ApiRunResult;
-      const ok = response.ok && result.ok;
-      setNodeStatus(node.id, ok ? "success" : "error");
       pushLog({
-        level: ok ? "success" : "error",
-        title: `${node.data.label} ${ok ? "completed" : "failed"}`,
+        level: ok ? (status === "warning" ? "warning" : "success") : "error",
+        title: `${node.data.label} ${ok ? (status === "warning" ? "completed with warning" : "completed") : "failed"}`,
         body: [
-          result.command,
-          result.stdout,
-          result.stderr,
-          result.error,
-          ...explainRunIssue(result).map((hint) => `Hint: ${hint}`),
+          executed.result.command,
+          executed.result.stdout,
+          executed.result.stderr,
+          executed.result.error,
+          ...postflight.reasons.map((reason) => `Post-validate: ${reason}`),
+          ...(postflight.warnings || []).map((warning) => `Warning: ${warning}`),
+          ...hints.map((hint) => `Hint: ${hint}`),
         ]
           .filter(Boolean)
           .join("\n")
           .trim(),
       });
-      await refreshHealth();
-      await refreshSnapshot();
-      return ok;
+      return { ok, status, outputs, health: nextHealth, snapshot: nextSnapshot };
     } catch (error) {
-      setNodeStatus(node.id, "error");
+      setNodeStatus(node.id, "error", {
+        lastRun: {
+          startedAt,
+          endedAt: new Date().toISOString(),
+          ok: false,
+          stderr: error instanceof Error ? error.message : String(error),
+          errorCode: "EXECUTE_EXCEPTION",
+        },
+      });
       pushLog({
         level: "error",
         title: `${node.data.label} failed`,
         body: error instanceof Error ? error.message : String(error),
       });
-      return false;
+      return { ok: false, status: "error" };
     }
   }
 
@@ -1804,23 +2579,48 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     await runNode(selectedNode);
   }
 
-  async function runSelectedNodes() {
-    const batch = workflowSequenceFromGraph(selectedNodes.length > 0 ? selectedNodes : [selectedNode], edges);
-    const completedNodeIds = new Set<string>();
+  function updateRunContext(context: WorkflowContext, node: PortalFlowNode, outcome: RunNodeOutcome) {
+    return {
+      ...context,
+      health: outcome.health === undefined ? context.health : outcome.health,
+      snapshot: outcome.snapshot === undefined ? context.snapshot : outcome.snapshot,
+      nodes: context.nodes.map((candidate) =>
+        candidate.id === node.id
+          ? {
+              ...candidate,
+              data: {
+                ...candidate.data,
+                status: outcome.status,
+                outputs: outcome.outputs || candidate.data.outputs,
+              },
+            }
+          : candidate,
+      ),
+    };
+  }
+
+  async function runFromSelectedNode() {
+    const graphOrderedNodes = workflowSequenceFromGraph(nodes, edges);
+    const selectedIndex = graphOrderedNodes.findIndex((node) => node.id === selectedNode.id);
+    const batch = graphOrderedNodes.slice(Math.max(selectedIndex, 0));
+    const completedNodeIds = new Set(
+      graphOrderedNodes.slice(0, Math.max(selectedIndex, 0)).map((node) => node.id),
+    );
+    let context: WorkflowContext = { nodes, edges, health, snapshot, endpoint };
     resetFlowEdgeStates(batch);
 
     for (const node of batch) {
       updateIncomingFlowEdges(node.id, completedNodeIds, "running");
+      const outcome = await runNode(node, context);
+      context = updateRunContext(context, node, outcome);
 
-      const ok = await runNode(node);
+      updateIncomingFlowEdges(node.id, completedNodeIds, outcome.ok ? "success" : "error");
 
-      updateIncomingFlowEdges(node.id, completedNodeIds, ok ? "success" : "error");
-
-      if (!ok) {
+      if (!outcome.ok) {
         pushLog({
           level: "warning",
-          title: "Selection run stopped",
-          body: `${node.data.label} returned an error. Fix that node before continuing the selected batch.`,
+          title: "Run from node stopped",
+          body: `${node.data.label} could not continue. Fix the blocked or failed node before resuming.`,
         });
         break;
       }
@@ -1832,15 +2632,17 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   async function runFlow() {
     const graphOrderedNodes = workflowSequenceFromGraph(nodes, edges);
     const completedNodeIds = new Set<string>();
+    let context: WorkflowContext = { nodes, edges, health, snapshot, endpoint };
     resetFlowEdgeStates(graphOrderedNodes);
 
     for (const node of graphOrderedNodes) {
       updateIncomingFlowEdges(node.id, completedNodeIds, "running");
-      const ok = await runNode(node);
+      const outcome = await runNode(node, context);
+      context = updateRunContext(context, node, outcome);
 
-      updateIncomingFlowEdges(node.id, completedNodeIds, ok ? "success" : "error");
+      updateIncomingFlowEdges(node.id, completedNodeIds, outcome.ok ? "success" : "error");
 
-      if (!ok) {
+      if (!outcome.ok) {
         pushLog({
           level: "warning",
           title: "Flow stopped",
@@ -1887,23 +2689,17 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
           <button className={`text-button quiet ${beginnerMode ? "active-mode" : ""}`} onClick={() => setBeginnerMode((value) => !value)}>
             Beginner mode
           </button>
-          <span className={`health-pill ${health?.rpcReachable ? "online" : "offline"}`}>
-            <CheckCircle2 size={16} />
-            {health?.rpcReachable ? "RPC online" : "RPC offline"}
-          </span>
           <button className="text-button" title="Run selected node" onClick={runSelectedNode}>
             <Play size={17} />
             Run node
           </button>
+          <button className="text-button" title="Run from selected node" onClick={runFromSelectedNode}>
+            <ArrowRight size={17} />
+            Run from node
+          </button>
           <button className="text-button" title="Run nodes in flow order" onClick={runFlow}>
             <GitBranch size={17} />
             Run flow
-          </button>
-          <button className="icon-button" title="Refresh local health" onClick={refreshHealth}>
-            <CheckCircle2 size={17} />
-          </button>
-          <button className="icon-button" title="Export graph JSON">
-            <Save size={17} />
           </button>
         </div>
       </header>
@@ -1951,7 +2747,10 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
                   onDragStart={(event) => startPaletteDrag(event, template)}
                 >
                   <Icon size={17} />
-                  <span>{template.label}</span>
+                  <span>
+                    <strong>{template.label}</strong>
+                    <small>{template.group}</small>
+                  </span>
                   <Plus size={15} />
                 </button>
               );
@@ -2009,10 +2808,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
                   <Link2 size={14} />
                   Flow connect
                 </button>
-                <button className="canvas-action" title="Run selected nodes in flow order" onClick={runSelectedNodes}>
-                  <Play size={14} />
-                  Run selection
-                </button>
+        
                 <button className="canvas-action" title="Duplicate selected nodes" onClick={duplicateSelectedNodes}>
                   <Copy size={14} />
                   Duplicate
@@ -2025,6 +2821,10 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
                 >
                   <Trash2 size={14} />
                   Delete
+                </button>
+                <button className="canvas-action quiet" title="Reset the board to the default workflow" onClick={resetBoard}>
+                  <RefreshCcw size={14} />
+                  Reset board
                 </button>
                 <button className="canvas-action quiet" title="Clear current selection" onClick={clearBoardSelection}>
                   Clear
@@ -2117,6 +2917,31 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
             </div>
           ) : null}
         </aside>
+      </section>
+
+      <section className="terminal-panel" aria-label="Run logs terminal">
+        <div className="terminal-panel__bar">
+          <div className="terminal-panel__title">
+            <FileText size={18} />
+            <span>Run Logs</span>
+          </div>
+          <div className="terminal-panel__meta">
+            <span>{runLogs.length} entries</span>
+            <span>{selectedNode.data.label}</span>
+            <span className={`terminal-status ${selectedNode.data.status}`}>{selectedNode.data.status}</span>
+          </div>
+        </div>
+        <div className="terminal-screen">
+          {runLogs.map((log) => (
+            <article key={log.id} className={`run-log ${log.level}`}>
+              <div className="run-log__header">
+                <span className="run-log__level">{log.level}</span>
+                <strong>{log.title}</strong>
+              </div>
+              <pre>{log.body}</pre>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="snapshot-panel" aria-label="State and event visualization">
@@ -2215,20 +3040,6 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
             <span>Markdown Export</span>
           </div>
           <pre>{markdownExport}</pre>
-        </div>
-        <div className="export-pane logs-pane">
-          <div className="panel-heading">
-            <FileText size={18} />
-            <span>Run Logs</span>
-          </div>
-          <div className="run-log-list">
-            {runLogs.map((log) => (
-              <article key={log.id} className={`run-log ${log.level}`}>
-                <div>{log.title}</div>
-                <pre>{log.body}</pre>
-              </article>
-            ))}
-          </div>
         </div>
       </section>
     </main>

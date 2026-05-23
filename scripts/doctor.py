@@ -146,7 +146,7 @@ def check_runtime_compatibility(url: str, timeout: float) -> bool:
 
 def check_address_file(path: Path) -> bool:
     if not path.exists():
-        return status(False, "Contract address file", f"missing at {path.relative_to(ROOT)}; deploy first")
+        return status(True, "Contract address file", f"not present at {path.relative_to(ROOT)}; deploy first for contract flows")
 
     address = path.read_text(encoding="utf-8").strip()
     return status(bool(address), "Contract address file", address if address else "file is empty")
