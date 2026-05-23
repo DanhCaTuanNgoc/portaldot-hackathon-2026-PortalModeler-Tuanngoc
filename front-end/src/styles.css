@@ -2571,6 +2571,208 @@ h1 {
   white-space: pre-wrap;
 }
 
+.ai-modal-overlay {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 7, 18, 0.72);
+  padding: 24px;
+}
+
+.ai-modal {
+  display: flex;
+  width: min(720px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  flex-direction: column;
+  gap: 16px;
+  overflow: auto;
+  border: 1px solid rgba(129, 140, 248, 0.34);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(17, 24, 58, 0.99), rgba(7, 11, 28, 0.99)),
+    #0b1028;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.48), inset 0 1px 0 rgba(220, 214, 255, 0.08);
+  padding: 20px;
+}
+
+.ai-modal__header,
+.ai-modal__footer,
+.ai-modal__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-modal__header {
+  justify-content: space-between;
+}
+
+.ai-modal__header h2 {
+  margin: 4px 0 0;
+  color: #f8fafc;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+.ai-modal__eyebrow {
+  color: #8bd3ff;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ai-modal__close {
+  flex: 0 0 auto;
+}
+
+.ai-prompt {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-prompt span,
+.ai-plan-preview__summary strong {
+  color: #e4e8ff;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ai-prompt textarea {
+  min-height: 128px;
+  resize: vertical;
+  border: 1px solid rgba(129, 140, 248, 0.24);
+  border-radius: 8px;
+  background: rgba(5, 10, 28, 0.82);
+  color: #dbeafe;
+  font-family: var(--font-console);
+  font-size: 13px;
+  line-height: 1.55;
+  outline: none;
+  padding: 12px;
+}
+
+.ai-prompt textarea:focus {
+  border-color: #a5b4fc;
+  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.14);
+}
+
+.ai-modal__actions {
+  justify-content: flex-start;
+}
+
+.ai-errors {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(255, 111, 138, 0.32);
+  border-radius: 8px;
+  background: rgba(69, 10, 26, 0.42);
+  color: #ffbecb;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 11px 12px;
+}
+
+.ai-plan-preview {
+  display: grid;
+  gap: 12px;
+  border: 1px solid rgba(89, 162, 255, 0.24);
+  border-radius: 8px;
+  background: rgba(7, 16, 40, 0.72);
+  padding: 14px;
+}
+
+.ai-plan-preview__summary {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-plan-preview__summary span {
+  color: #aebbe7;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.ai-plan-list {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-plan-step {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  border: 1px solid rgba(129, 140, 248, 0.18);
+  border-radius: 8px;
+  background: rgba(15, 23, 52, 0.76);
+  padding: 10px;
+}
+
+.ai-plan-step > span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 8px;
+  color: #8bd3ff;
+  font-family: var(--font-console);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ai-plan-step strong,
+.ai-plan-step small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ai-plan-step strong {
+  color: #edf2ff;
+  font-size: 13px;
+}
+
+.ai-plan-step small {
+  margin-top: 5px;
+  color: #90a4c8;
+  font-family: var(--font-console);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ai-run-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: #d6def8;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.ai-run-confirm input {
+  margin-top: 2px;
+  accent-color: #818cf8;
+}
+
+.ai-modal__footer {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  padding-top: 14px;
+}
+
+.text-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 @media (max-width: 860px) {
   .workspace {
     display: flex;
@@ -2584,6 +2786,19 @@ h1 {
 
   .board-panel {
     min-height: 620px;
+  }
+
+  .ai-modal-overlay {
+    padding: 14px;
+  }
+
+  .ai-modal {
+    max-height: calc(100vh - 28px);
+    padding: 16px;
+  }
+
+  .ai-modal__footer .text-button {
+    flex: 1 1 150px;
   }
 
   .home-nav {

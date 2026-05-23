@@ -20,11 +20,13 @@ import {
   Server,
   Settings2,
   Shield,
+  Sparkles,
   RefreshCcw,
   Trash2,
   UserRound,
   WalletCards,
   Home,
+  X,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent } from "react";
 import portalLogo from "./assets/logo_portalmodeler.png";
@@ -230,6 +232,23 @@ type RunNodeOutcome = {
   outputs?: Record<string, unknown>;
   health?: HealthState | null;
   snapshot?: ChainSnapshot | null;
+};
+
+type AiFlowPlanStep = {
+  kind: PortalNodeKind;
+  config: PortalNodeConfig;
+};
+
+type AiFlowPlan = {
+  title: string;
+  summary: string;
+  steps: AiFlowPlanStep[];
+  edges: Array<[PortalNodeKind, PortalNodeKind]>;
+};
+
+type AiPlannerResult = {
+  plan: AiFlowPlan | null;
+  errors: string[];
 };
 
 type NodeDependencyRule = {
@@ -562,6 +581,113 @@ function hydrateCommand(template: string, config: PortalNodeConfig, endpoint = "
     .replace("{message}", config.message || config.action || "is_member");
 }
 
+function templateForKind(kind: PortalNodeKind) {
+  return templates.find((template) => template.kind === kind);
+}
+
+function parsePromptAmount(prompt: string) {
+  const amountMatch = prompt.match(/(?:amount|value|so luong|số lượng|transfer|send|chuyen|chuyển)\s*(?:pot)?\s*[:=]?\s*([0-9][0-9_,.]*)/i);
+  if (!amountMatch) {
+    return "1000000000000";
+  }
+
+  return amountMatch[1].replace(/[_,.]/g, "");
+}
+
+function planWorkflowFromPrompt(prompt: string, currentEndpoint?: string): AiPlannerResult {
+  const trimmedPrompt = prompt.trim();
+  const errors: string[] = [];
+
+  if (!trimmedPrompt) {
+    return { plan: null, errors: ["Enter a prompt before generating a flow."] };
+  }
+
+  const normalizedPrompt = trimmedPrompt.toLowerCase();
+  const wantsTransfer =
+    /\b(transfer|send|pot)\b/i.test(trimmedPrompt) ||
+    normalizedPrompt.includes("chuyển") ||
+    normalizedPrompt.includes("chuyen") ||
+    normalizedPrompt.includes("gui") ||
+    normalizedPrompt.includes("gửi");
+
+  if (!wantsTransfer) {
+    errors.push("V1 planner only supports Transfer POT workflows.");
+  }
+
+  const endpoint = trimmedPrompt.match(/\bwss?:\/\/[^\s,;]+/i)?.[0] || currentEndpoint || "ws://127.0.0.1:9944";
+  if (!/^wss?:\/\//i.test(endpoint)) {
+    errors.push("RPC endpoint must start with ws:// or wss://.");
+  }
+
+  const recipient = trimmedPrompt.match(/\b5[1-9A-HJ-NP-Za-km-z]{20,}\b/)?.[0] || "";
+  if (!recipient) {
+    errors.push("Transfer flow needs a recipient SS58 address that starts with 5.");
+  }
+
+  if (errors.length > 0) {
+    return { plan: null, errors };
+  }
+
+  const amount = parsePromptAmount(trimmedPrompt);
+  const steps: AiFlowPlanStep[] = [
+    { kind: "connectRpc", config: { endpoint } },
+    { kind: "checkAccount", config: { seed: "//Alice", account: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY" } },
+    { kind: "checkBalance", config: {} },
+    { kind: "transferPot", config: { recipient, value: amount } },
+  ];
+
+  return {
+    plan: {
+      title: "Transfer POT flow",
+      summary: `Connect to ${endpoint}, verify signer balance, then transfer ${amount} POT units to ${recipient}.`,
+      steps,
+      edges: [
+        ["connectRpc", "checkAccount"],
+        ["checkAccount", "checkBalance"],
+        ["checkBalance", "transferPot"],
+      ],
+    },
+    errors: [],
+  };
+}
+
+function buildNodesFromAiPlan(plan: AiFlowPlan): PortalFlowNode[] {
+  return plan.steps.map((step, index) => {
+    const template = templateForKind(step.kind);
+    if (!template) {
+      throw new Error(`Unsupported AI node kind: ${step.kind}`);
+    }
+
+    const id = step.kind;
+    const config = { ...template.config, ...step.config };
+    return {
+      id,
+      type: "portal",
+      position: { x: 90 + index * 280, y: 180 },
+      data: {
+        kind: template.kind,
+        label: template.label,
+        description: template.description,
+        command: template.command,
+        status: "ready",
+        config,
+        inputs: { ...config },
+        outputs: {},
+        dependsOn: index === 0 ? [] : [plan.steps[index - 1].kind],
+      },
+    };
+  });
+}
+
+function buildEdgesFromAiPlan(plan: AiFlowPlan, nodes: PortalFlowNode[]) {
+  return plan.edges.map(([source, target]) => {
+    const sourceNode = nodes.find((node) => node.id === source);
+    const targetNode = nodes.find((node) => node.id === target);
+    const handles = sourceNode && targetNode ? closestFlowHandles(sourceNode, targetNode) : undefined;
+    return makeFlowEdge(source, target, "planned", handles?.sourceHandle, handles?.targetHandle);
+  });
+}
+
 type PortalNodeCardProps = {
   node: PortalFlowNode;
   selected: boolean;
@@ -604,6 +730,129 @@ const PortalNodeCard = memo(function PortalNodeCard({
     </div>
   );
 });
+
+type AiFlowModalProps = {
+  open: boolean;
+  prompt: string;
+  result: AiPlannerResult | null;
+  needsRunConfirm: boolean;
+  onClose: () => void;
+  onPromptChange: (value: string) => void;
+  onGenerate: () => void;
+  onApply: () => void;
+  onApplyAndRun: () => void;
+  onConfirmRunChange: (value: boolean) => void;
+};
+
+function AiFlowModal({
+  open,
+  prompt,
+  result,
+  needsRunConfirm,
+  onClose,
+  onPromptChange,
+  onGenerate,
+  onApply,
+  onApplyAndRun,
+  onConfirmRunChange,
+}: AiFlowModalProps) {
+  if (!open) {
+    return null;
+  }
+
+  const plan = result?.plan || null;
+  const errors = result?.errors || [];
+
+  return (
+    <div className="ai-modal-overlay" role="presentation" onMouseDown={onClose}>
+      <section
+        className="ai-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ai-flow-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="ai-modal__header">
+          <div>
+            <span className="ai-modal__eyebrow">Local planner</span>
+            <h2 id="ai-flow-title">AI Flow Builder</h2>
+          </div>
+          <button className="icon-button ai-modal__close" type="button" aria-label="Close AI Flow Builder" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <label className="ai-prompt">
+          <span>Prompt</span>
+          <textarea
+            value={prompt}
+            onChange={(event) => onPromptChange(event.target.value)}
+            placeholder="Type your prompt here, e.g. 'Transfer 0.001 POT to Bob on my local node'"
+          />
+        </label>
+
+        <div className="ai-modal__actions">
+          <button className="text-button" type="button" onClick={onGenerate}>
+            <Sparkles size={16} />
+            Generate flow
+          </button>
+        </div>
+
+        {errors.length > 0 ? (
+          <div className="ai-errors" role="alert">
+            {errors.map((error) => (
+              <div key={error}>{error}</div>
+            ))}
+          </div>
+        ) : null}
+
+        {plan ? (
+          <div className="ai-plan-preview">
+            <div className="ai-plan-preview__summary">
+              <strong>{plan.title}</strong>
+              <span>{plan.summary}</span>
+            </div>
+            <div className="ai-plan-list">
+              {plan.steps.map((step, index) => {
+                const template = templateForKind(step.kind);
+                return (
+                  <article key={step.kind} className="ai-plan-step">
+                    <span>{index + 1}</span>
+                    <div>
+                      <strong>{template?.label || step.kind}</strong>
+                      <small>{hydrateCommand(template?.command || "", { ...(template?.config || {}), ...step.config })}</small>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            <label className="ai-run-confirm">
+              <input
+                type="checkbox"
+                checked={needsRunConfirm}
+                onChange={(event) => onConfirmRunChange(event.target.checked)}
+              />
+              <span>I understand Apply & run may submit a real local transfer transaction.</span>
+            </label>
+          </div>
+        ) : null}
+
+        <div className="ai-modal__footer">
+          <button className="text-button quiet" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="text-button" type="button" onClick={onApply} disabled={!plan}>
+            Apply to board
+          </button>
+          <button className="text-button active-mode" type="button" onClick={onApplyAndRun} disabled={!plan || !needsRunConfirm}>
+            <Play size={16} />
+            Apply & run
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
 
 type LightweightFlowCanvasProps = {
   nodes: PortalFlowNode[];
@@ -1984,6 +2233,11 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([initialNodes[0].id]);
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<string[]>([]);
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiPlannerResult, setAiPlannerResult] = useState<AiPlannerResult | null>(null);
+  const [aiRunConfirm, setAiRunConfirm] = useState(false);
+  const [runAfterAiApply, setRunAfterAiApply] = useState(false);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) || null;
   const selectedNodes = useMemo(
@@ -2328,6 +2582,48 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     });
   }
 
+  function closeAiModal() {
+    setAiModalOpen(false);
+    setAiRunConfirm(false);
+  }
+
+  function updateAiPrompt(value: string) {
+    setAiPrompt(value);
+    setAiPlannerResult(null);
+    setAiRunConfirm(false);
+  }
+
+  function generateAiFlow() {
+    const result = planWorkflowFromPrompt(aiPrompt, endpoint);
+    setAiPlannerResult(result);
+    setAiRunConfirm(false);
+  }
+
+  function applyAiPlan(runAfterApply = false) {
+    if (!aiPlannerResult?.plan) {
+      return;
+    }
+
+    const nextNodes = buildNodesFromAiPlan(aiPlannerResult.plan);
+    const nextEdges = buildEdgesFromAiPlan(aiPlannerResult.plan, nextNodes);
+    const selectedId = nextNodes[nextNodes.length - 1]?.id || "";
+
+    setNodes(nextNodes.map((node) => ({ ...node, selected: node.id === selectedId })));
+    setEdges(nextEdges);
+    setSelectedNodeId(selectedId);
+    setSelectedNodeIds(selectedId ? [selectedId] : []);
+    setSelectedEdgeIds([]);
+    setFlowConnectMode(false);
+    setAiModalOpen(false);
+    setAiRunConfirm(false);
+    setRunAfterAiApply(runAfterApply);
+    pushLog({
+      level: "info",
+      title: "AI flow applied",
+      body: `${aiPlannerResult.plan.title} created ${nextNodes.length} nodes and ${nextEdges.length} lines from the local planner.`,
+    });
+  }
+
   function updateConfig(key: keyof PortalNodeConfig, value: string) {
     if (!selectedNode) {
       return;
@@ -2576,6 +2872,12 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
 
   useEffect(() => {
     function handleBoardHotkeys(event: KeyboardEvent) {
+      if (event.key === "Escape" && aiModalOpen) {
+        event.preventDefault();
+        closeAiModal();
+        return;
+      }
+
       if (event.target instanceof HTMLInputElement) {
         return;
       }
@@ -2590,18 +2892,31 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     return () => window.removeEventListener("keydown", handleBoardHotkeys);
   });
 
+  useEffect(() => {
+    if (!runAfterAiApply) {
+      return;
+    }
+
+    setRunAfterAiApply(false);
+    void runFlow();
+  }, [runAfterAiApply]);
+
   return (
     <main className="app-shell">
       <header className="topbar">
         <div className="topbar__title">
           <PortalModelerBrand compact />
           <div>
-            <div className="eyebrow">PortalModeler Workbench</div>
+            <div className="eyebrow">Portaldot Hackathon 2026</div>
             <h1>PortalModeler Workbench</h1>
-            <p>Design, run, and inspect Portaldot smart-contract workflows from a visual blockchain developer console.</p>
+            <p>Design, run, and inspect smart-contract workflows from a visual blockchain developer console.</p>
           </div>
         </div>
         <div className="topbar__actions">
+          <button className="text-button active-mode" title="Open AI Flow Builder" onClick={() => setAiModalOpen(true)}>
+            <Sparkles size={17} />
+            AI
+          </button>
           <button className="text-button quiet" title="Back to homepage" onClick={onOpenHome}>
             <Home size={17} />
             Home
@@ -2623,6 +2938,19 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
           </button>
         </div>
       </header>
+
+      <AiFlowModal
+        open={aiModalOpen}
+        prompt={aiPrompt}
+        result={aiPlannerResult}
+        needsRunConfirm={aiRunConfirm}
+        onClose={closeAiModal}
+        onPromptChange={updateAiPrompt}
+        onGenerate={generateAiFlow}
+        onApply={() => applyAiPlan(false)}
+        onApplyAndRun={() => applyAiPlan(true)}
+        onConfirmRunChange={setAiRunConfirm}
+      />
 
       <section className="workflow-strip" aria-label="Membership workflow readiness">
         {[
