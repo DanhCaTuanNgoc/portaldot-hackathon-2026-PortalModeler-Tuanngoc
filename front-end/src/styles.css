@@ -189,7 +189,8 @@ pre {
   gap: 10px;
 }
 
-.home-nav__links a {
+.home-nav__links a,
+.home-nav__tag {
   display: inline-flex;
   min-height: 40px;
   align-items: center;
@@ -215,7 +216,8 @@ pre {
     transform 180ms ease;
 }
 
-.home-nav__links a:hover {
+.home-nav__links a:hover,
+.home-nav__tag:hover {
   border-color: rgba(216, 180, 254, 0.58);
   background:
     linear-gradient(135deg, rgba(139, 92, 246, 0.28), rgba(96, 165, 250, 0.16)),
@@ -2495,6 +2497,80 @@ h1 {
   white-space: pre-wrap;
 }
 
+.terminal-empty {
+  align-self: stretch;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(8, 23, 38, 0.88), rgba(3, 10, 20, 0.94)),
+    #050b14;
+  box-shadow:
+    inset 0 1px 0 rgba(226, 242, 255, 0.05),
+    0 18px 42px rgba(0, 0, 0, 0.18);
+  color: #c4d3e6;
+  font-family: var(--font-console);
+  padding: 16px;
+}
+
+.terminal-empty__prompt {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  color: #dbeafe;
+  font-size: 12px;
+  font-weight: 700;
+  padding-bottom: 12px;
+}
+
+.terminal-empty__prompt strong {
+  color: #f8fafc;
+  font-weight: 800;
+}
+
+.terminal-empty__user {
+  color: #7dd3fc;
+}
+
+.terminal-empty__path {
+  color: #9ff0c4;
+}
+
+.terminal-empty__grid {
+  display: grid;
+  grid-template-columns: minmax(84px, max-content) minmax(0, 1fr);
+  gap: 8px 14px;
+  margin-top: 14px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.terminal-empty__grid span {
+  color: #7d91ad;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.terminal-empty__grid strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #d8e6f8;
+  font-weight: 700;
+}
+
+.terminal-empty pre {
+  margin-top: 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+  color: #8bd3ff;
+  font-family: var(--font-console);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.75;
+  padding-top: 12px;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 860px) {
   .workspace {
     display: flex;
@@ -2517,7 +2593,8 @@ h1 {
     padding: 18px 24px;
   }
 
-  .home-nav__links a {
+  .home-nav__links a,
+  .home-nav__tag {
     display: none;
   }
 

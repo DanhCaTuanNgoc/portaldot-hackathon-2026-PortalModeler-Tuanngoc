@@ -1,7 +1,6 @@
 import {
   ArrowRight,
   Boxes,
-  CheckCircle2,
   ClipboardList,
   Code2,
   Copy,
@@ -1739,10 +1738,11 @@ function HomePage({ onOpenWorkbench }: { onOpenWorkbench: () => void }) {
           <nav className="home-nav">
             <PortalModelerBrand />
             {/* <div className="home-nav__links">
-              <a href="#workflow">Workflow</a>
-              <a href="#execution">Execution</a>
-              <a href="#future-plan">Roadmap</a>
-              <a href="#faq">Learning</a>
+              <span className="home-nav__tag">Dev Tool</span>
+              <span className="home-nav__tag">Blockchain</span>
+              <span className="home-nav__tag">Rust</span>
+              <span className="home-nav__tag">Substrate</span>
+              <span className="home-nav__tag">Portaldot</span>
             </div> */}
             <div className="home-nav__actions">
               <button className="home-nav__button hero-secondary" onClick={onOpenWorkbench}>
@@ -1976,17 +1976,10 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   const [nodes, setNodes] = useState<PortalFlowNode[]>(initialNodes);
   const [edges, setEdges] = useState<Edge[]>(initialEdges);
   const [selectedNodeId, setSelectedNodeId] = useState(initialNodes[0].id);
-  const [runLogs, setRunLogs] = useState<RunLog[]>([
-    {
-      id: "phase2-ready",
-      level: "info",
-      title: "Phase 2 runner ready",
-      body: "Only whitelisted PortalModeler nodes can call local scripts through the Vite middleware.",
-    },
-  ]);
+  const [runLogs, setRunLogs] = useState<RunLog[]>([]);
   const [health, setHealth] = useState<HealthState | null>(null);
   const [snapshot, setSnapshot] = useState<ChainSnapshot | null>(null);
-  const [beginnerMode, setBeginnerMode] = useState(true);
+  const [beginnerMode] = useState(true);
   const [flowConnectMode, setFlowConnectMode] = useState(false);
   const [showAdvancedFields, setShowAdvancedFields] = useState(false);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([initialNodes[0].id]);
@@ -2005,13 +1998,6 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
         title: "Board cleared",
         items: ["The visual board is empty. Add a node from the palette to start a new workflow."],
       };
-  const setupChecklist = [
-    { label: "Local RPC online", done: Boolean(health?.rpcReachable) },
-    { label: "Contract artifacts ready", done: Boolean(health?.artifactsReady) },
-    { label: "Live contract reachable", done: Boolean(health?.contractReachable) },
-    { label: "Membership state readable", done: snapshot?.state.isMember !== null && snapshot?.state.isMember !== undefined },
-  ];
-
   const orderedNodes = useMemo(() => {
     return [...nodes].sort((a, b) => flowOrder.indexOf(a.data.kind) - flowOrder.indexOf(b.data.kind));
   }, [nodes]);
@@ -2611,8 +2597,8 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
           <PortalModelerBrand compact />
           <div>
             <div className="eyebrow">PortalModeler Workbench</div>
-            <h1>Membership Flow Board</h1>
-            <p>Model, execute, and inspect a local ink! membership workflow from one dev-focused surface.</p>
+            <h1>PortalModeler Workbench</h1>
+            <p>Design, run, and inspect Portaldot smart-contract workflows from a visual blockchain developer console.</p>
           </div>
         </div>
         <div className="topbar__actions">
@@ -2747,6 +2733,10 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
                   <Copy size={14} />
                   Duplicate
                 </button>
+                <button className="canvas-action quiet" title="Reset the board to the default workflow" onClick={resetBoard}>
+                  <RefreshCcw size={14} />
+                  Reset board
+                </button>
                 <button
                   className="canvas-action danger"
                   title="Delete selected nodes and lines"
@@ -2756,13 +2746,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
                   <Trash2 size={14} />
                   Delete
                 </button>
-                <button className="canvas-action quiet" title="Reset the board to the default workflow" onClick={resetBoard}>
-                  <RefreshCcw size={14} />
-                  Reset board
-                </button>
-                <button className="canvas-action quiet" title="Clear current selection" onClick={clearBoardSelection}>
-                  Clear
-                </button>
+                
               </div>
             </div>
           </div>
@@ -2878,15 +2862,40 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
           </div>
         </div>
         <div className="terminal-screen">
-          {runLogs.map((log) => (
-            <article key={log.id} className={`run-log ${log.level}`}>
-              <div className="run-log__header">
-                <span className="run-log__level">{log.level}</span>
-                <strong>{log.title}</strong>
+          {runLogs.length > 0 ? (
+            runLogs.map((log) => (
+              <article key={log.id} className={`run-log ${log.level}`}>
+                <div className="run-log__header">
+                  <span className="run-log__level">{log.level}</span>
+                  <strong>{log.title}</strong>
+                </div>
+                <pre>{log.body}</pre>
+              </article>
+            ))
+          ) : (
+            <div className="terminal-empty" aria-label="Run logs standby">
+              <div className="terminal-empty__prompt">
+                <span className="terminal-empty__user">portalmodeler@local</span>
+                <span>:</span>
+                <span className="terminal-empty__path">~/workbench</span>
+                <span>$</span>
+                <strong> waiting for node execution</strong>
               </div>
-              <pre>{log.body}</pre>
-            </article>
-          ))}
+              <div className="terminal-empty__grid">
+                <span>rpc</span>
+                <strong>{endpoint || "ws://127.0.0.1:9944"}</strong>
+                <span>selected</span>
+                <strong>{selectedNode?.data.label || "no node selected"}</strong>
+                <span>runner</span>
+                <strong>standby</strong>
+                <span>output</span>
+                <strong>extrinsic hash, block hash, events, stderr</strong>
+              </div>
+              <pre>{`> choose a workflow node
+> run node / run from node / run flow
+> transaction traces will stream here`}</pre>
+            </div>
+          )}
         </div>
       </section>
 
