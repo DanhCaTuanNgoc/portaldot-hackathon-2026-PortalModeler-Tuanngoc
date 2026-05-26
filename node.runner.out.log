@@ -1,0 +1,8 @@
+Launching node command: "D:\Coding\PortalPot-Hackathon\portaldot-proof\.local-node\latest-node\portaldot_dev" --dev --alice
+Writing live log snapshot to: D:\Coding\PortalPot-Hackathon\portaldot-proof\front-end\public\node-log.json
+Test POT tip: open https://polkadot.js.org/apps/?rpc=ws%3A%2F%2F127.0.0.1%3A9944#/accounts
+Use ALICE -> Send -> paste your address -> enter amount -> Sign (no password needed).
+ALICE has millions of POT, so you can top up as often as needed.
+[13:02:13] '"D:\Coding\PortalPot-Hackathon\portaldot-proof\.local-node\latest-node\portaldot_dev"' is not recognized as an internal or external command,
+[13:02:13] operable program or batch file.
+Node process exited with code 1

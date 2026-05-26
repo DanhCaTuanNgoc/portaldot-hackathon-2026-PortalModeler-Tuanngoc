@@ -30,6 +30,7 @@ def main() -> None:
     )
     parser.add_argument("--member", help="Account to query for is_member/joined_at. Defaults to signer.")
     parser.add_argument("--value", type=int, default=0, help="Value transferred for payable calls.")
+    parser.add_argument("--dry-run-only", action="store_true", help="Dry-run a payable call and do not submit an extrinsic.")
     args = parser.parse_args()
 
     portaldot = connect(args.url, args.ss58, args.type_registry_preset)
@@ -51,6 +52,10 @@ def main() -> None:
     if args.action == "join":
         dry_run = contract.read(keypair, "join", args={}, value=args.value)
         print_json("Dry-run", dry_run.value)
+        print(f"Dry-run gas required: {dry_run.gas_required}")
+        if args.dry_run_only:
+            print("Dry-run only; no extrinsic submitted.")
+            return
         receipt = contract.exec(keypair, "join", args={}, value=args.value, gas_limit=dry_run.gas_required)
         if receipt.is_success:
             print(f"Success. Extrinsic: {receipt.extrinsic_hash}")

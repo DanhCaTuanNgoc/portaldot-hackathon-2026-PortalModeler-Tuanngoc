@@ -1,0 +1,3 @@
+wsl bash -lc "cd /mnt/d/Coding/PortalPot-Hackathon/portaldot-proof && chmod +x ./.local-node/latest-node/portaldot_dev && ./.local-node/latest-node/portaldot_dev --dev --tmp --alice"
+
+wsl pkill -f portaldot_dev

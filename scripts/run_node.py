@@ -11,8 +11,18 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_COMMAND = "portaldot_dev --dev --alice"
-DEFAULT_LOG_FILE = Path(__file__).resolve().parents[1] / "front-end" / "public" / "node-log.json"
+ROOT = Path(__file__).resolve().parents[1]
+LOCAL_NODE = ROOT / ".local-node" / "latest-node" / "portaldot_dev"
+
+
+def default_command() -> str:
+    if LOCAL_NODE.is_file():
+        return f'"{LOCAL_NODE}" --dev --alice'
+    return "portaldot_dev --dev --alice"
+
+
+DEFAULT_COMMAND = default_command()
+DEFAULT_LOG_FILE = ROOT / "front-end" / "public" / "node-log.json"
 
 
 def classify_level(line: str) -> str:

@@ -1,4 +1,4 @@
-# PortalModeler Ideas
+﻿# PortalModeler Ideas
 
 ## 1. Product Vision
 
@@ -139,6 +139,7 @@ These nodes are enough to make the product feel like a real visual modeler while
 | Local Faucet Hint | Explain how to top up with local Alice |
 | Condition Node | Check if balance, contract address, or artifact exists |
 | Contract Address Store | Read/write `contract-address.txt` |
+| AI Flow Planner | Generate a validated workflow JSON from a prompt using a server-side Gemini/OpenRouter/OpenAI API call |
 
 ### Phase 3 Nodes
 
@@ -150,6 +151,7 @@ These nodes are enough to make the product feel like a real visual modeler while
 | Compare Snapshot Node | Compare state before and after actions |
 | Multi-contract Node | Model interactions between contracts |
 | Docs Generator Node | Generate docs from the flow |
+| AI Repair Node | Read failed logs and propose a safer retry/debug workflow |
 
 ## 8. MVP Flow
 
@@ -353,6 +355,10 @@ Current implementation status:
 - [x] Add local node health check.
 - [x] Read `contract-address.txt` after deploy.
 - [x] Make deploy/join safe to re-run against an existing local state.
+- [x] Add API-backed AI Flow Builder through `/api/ai-plan`.
+- [x] Add Gemini provider support with `GEMINI_MODEL=gemini-2.5-flash`.
+- [x] Validate AI-generated node kinds, config shape, and edges before applying to the board.
+- [x] Fall back to the deterministic local planner when `OPENAI_API_KEY` is missing or the API call fails.
 
 Tasks:
 

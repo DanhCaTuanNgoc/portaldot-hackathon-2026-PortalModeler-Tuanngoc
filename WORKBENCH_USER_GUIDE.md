@@ -27,7 +27,7 @@ Khi vao workbench, ban se thay:
 - Cot trai: Palette, noi chua cac node co the them vao bang.
 - Giua man hinh: Flow Canvas, noi sap xep va noi cac node.
 - Cot phai: Inspector, noi xem va sua cau hinh cua node dang chon.
-- Phan duoi: Account, Contract, State, Event Timeline, Command Sheet, Graph JSON, Markdown Export, Run Logs.
+- Phan duoi: Account, Contract, State, Event Timeline, one-click artifact export, Command Sheet, Graph JSON, Markdown Export, Run Logs.
 
 ## 3. Giai thich thanh tren cung
 
@@ -79,6 +79,24 @@ Nut **Run flow** chay toan bo cac node tren board theo thu tu luong mac dinh:
 
 Neu mot node loi, flow se dung lai va ghi loi vao **Run Logs**.
 
+### AI Flow Builder
+
+Nut **AI** mo hop prompt de tao workflow tu ngon ngu tu nhien.
+
+Neu may da cau hinh `GEMINI_API_KEY` voi `AI_PROVIDER=gemini`, workbench se goi `/api/ai-plan` o Vite middleware. API key nam server-side, khong nam trong browser.
+
+AI chi duoc tra ve JSON workflow gom:
+
+- `title`
+- `summary`
+- `steps`
+- `edges`
+- `autoRun`
+
+Workbench se validate node kind theo whitelist truoc khi dua vao board. Neu provider AI khong san sang, workbench tu dong quay ve planner local cho Transfer POT.
+
+AI khong duoc chay shell tuy y. Sau khi node duoc dua vao board, viec execute van di qua safe runner `/api/run-node`.
+
 ### Nut refresh local health
 
 Nut icon dau tich tron dung de cap nhat lai trang thai local:
@@ -89,9 +107,23 @@ Nut icon dau tich tron dung de cap nhat lai trang thai local:
 
 Nen bam nut nay sau khi ban start local node, build contract, deploy contract, hoac doi endpoint.
 
-### Nut Export graph JSON / Save icon
+### One-click artifact export
 
-Nut icon save hien co title **Export graph JSON**. Trong code hien tai, nut nay chua gan hanh dong download/copy file. Tuy vay, noi dung graph JSON da duoc hien san o panel **Graph JSON** ben duoi man hinh.
+Thanh export nam ngay tren cac panel Command Sheet, Graph JSON va Markdown Export. Cac nut nay giup copy command sheet, tai Markdown, tai Flow JSON, tai PortalModel JSON, tai ink! skeleton, hoac import nguoc thanh visual board.
+
+Nut **Replace import / Merge import** chon cach nap file:
+
+- **Replace import**: thay board hien tai bang diagram import duoc.
+- **Merge import**: giu board hien tai va them diagram import vao board.
+
+Nut **Import file** hien co the doc:
+
+- `portalmodeler-flow.json`
+- `portalmodel.json`
+- ink! metadata JSON
+- file Rust ink! source `.rs`
+
+Nut **Paste code** doc Rust ink! source tu clipboard va tao diagram prototype cho cac pattern pho bien nhu storage, message, event va payable.
 
 ## 4. Dong trang thai nhanh
 
@@ -138,6 +170,16 @@ Cot trai la **Palette**. Moi dong la mot node mau. Ban co the:
 
 Cac node hien tai:
 
+### Local Node Manager
+
+Dung de xem trang thai RPC va cac lenh local node can thiet:
+
+- start node bang `python scripts/run_node.py`
+- stop node bang `wsl pkill -f portaldot_dev`
+- kiem tra RPC dang online hay offline
+
+Node nay khong chay shell tuy y. No chi hien va log cac lenh da duoc du an chap nhan.
+
 ### Chain Connect
 
 Dung de kiem tra ket noi den blockchain local.
@@ -165,6 +207,40 @@ Voi blockchain, moi hanh dong ghi du lieu can mot tai khoan ky. Giong nhu ban ca
 Dung de doc so du cua tai khoan dang chon.
 
 No khong thay doi blockchain, chi doc thong tin.
+
+### Transaction Preview
+
+Dung de uoc tinh giao dich truoc khi submit.
+
+Voi Transfer POT, node nay goi `scripts/transfer.py --dry-run-only` de lay fee tu `payment_queryInfo` ma khong gui extrinsic.
+
+### Metadata Explorer
+
+Dung de doc metadata ink! va liet ke:
+
+- constructors
+- messages
+- events
+
+Ket qua hien trong **Selected Outputs** va giup dev biet contract co the goi nhung message nao.
+
+### Dry Run Call
+
+Dung de dry-run contract call truoc khi submit. Hien tai node nay ho tro luong Membership `join` va in gas evidence neu runtime tra ve du lieu.
+
+### State Diff
+
+Dung de so sanh snapshot truoc va sau khi chay node:
+
+- balance
+- nonce
+- contract reachable
+- `is_member`
+- `joined_at`
+
+### Error Decoder
+
+Dung de doc node moi nhat bi loi hoac bi chan, sau do hien goi y sua loi dua tren cac mau loi quen thuoc nhu RPC offline, stale contract, missing artifact, insufficient balance.
 
 ### Artifact Select
 
@@ -392,6 +468,17 @@ Hien cau truc graph hien tai gom:
 - Edges: cac duong noi giua node.
 
 Day la ban xuat may-doc-duoc cua flow.
+
+### Selected Outputs
+
+Hien output co cau truc cua node dang chon. Vi du:
+
+- Metadata Explorer: constructors, messages, events.
+- Transaction Preview: estimated fee.
+- Dry Run Call: gas required.
+- Transfer POT: extrinsic hash, block hash.
+- State Diff: before/after changes.
+- Error Decoder: explanation va suggested fixes.
 
 ### Markdown Export
 

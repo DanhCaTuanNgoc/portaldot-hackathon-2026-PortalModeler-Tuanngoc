@@ -24,18 +24,25 @@ import {
   RefreshCcw,
   Trash2,
   UserRound,
+  Upload,
   WalletCards,
   Home,
   X,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type DragEvent, type PointerEvent } from "react";
 import portalLogo from "./assets/logo_portalmodeler.png";
 
 type PortalNodeKind =
+  | "manageLocalNode"
   | "connectRpc"
   | "checkRuntime"
   | "checkAccount"
   | "checkBalance"
+  | "exploreMetadata"
+  | "dryRunCall"
+  | "transactionPreview"
+  | "stateDiff"
+  | "decodeError"
   | "buildContract"
   | "loadArtifact"
   | "deployContract"
@@ -79,6 +86,8 @@ type PortalNodeConfig = {
   metadataPath?: string;
   wasmPath?: string;
   eventName?: string;
+  mode?: string;
+  target?: string;
 };
 
 type NodeLastRun = {
@@ -197,6 +206,12 @@ type ChainSnapshot = {
   events: SnapshotEvent[];
 };
 
+type MetadataSummary = {
+  constructors: string[];
+  messages: string[];
+  events: string[];
+};
+
 type Page = "home" | "workbench";
 
 type Guidance = {
@@ -217,6 +232,7 @@ type WorkflowContext = {
   edges: Edge[];
   health: HealthState | null;
   snapshot: ChainSnapshot | null;
+  previousSnapshot?: ChainSnapshot | null;
   endpoint?: string;
 };
 
@@ -244,11 +260,52 @@ type AiFlowPlan = {
   summary: string;
   steps: AiFlowPlanStep[];
   edges: Array<[PortalNodeKind, PortalNodeKind]>;
+  autoRun?: boolean;
 };
 
 type AiPlannerResult = {
   plan: AiFlowPlan | null;
   errors: string[];
+  warnings?: string[];
+  source?: "openai" | "openrouter" | "gemini" | "local";
+  model?: string;
+};
+
+type PortalModel = {
+  version: "0.1";
+  contract: string;
+  actors: string[];
+  states: Array<{ name: string; type: string }>;
+  actions: Array<{ name: string; actor: string; requires?: string; emits?: string }>;
+  events: Array<{ name: string; fields: string[] }>;
+  workflow: Array<{ id: string; kind: PortalNodeKind; label: string; command: string }>;
+};
+
+type ImportedGraph = {
+  nodes: PortalFlowNode[];
+  edges: Edge[];
+  source: "flow" | "portalModel" | "metadata" | "rust";
+};
+
+type SerializedWorkflow = {
+  nodes?: Array<{
+    id?: string;
+    kind?: PortalNodeKind;
+    position?: XYPosition;
+    status?: NodeStatus;
+    inputs?: Record<string, unknown>;
+    outputs?: Record<string, unknown>;
+    dependsOn?: string[];
+    config?: PortalNodeConfig;
+    lastRun?: NodeLastRun;
+  }>;
+  edges?: Array<{
+    id?: string;
+    source?: string;
+    target?: string;
+    sourceHandle?: string | null;
+    targetHandle?: string | null;
+  }>;
 };
 
 type NodeDependencyRule = {
@@ -277,9 +334,30 @@ const advancedConfigKeys = new Set([
   "args",
   "gasLimit",
   "contractAddress",
+  "mode",
+  "target",
+]);
+
+const browserHelperNodeKinds = new Set<PortalNodeKind>([
+  "watchEvents",
+  "decodeEvents",
+  "exportWorkflow",
+  "exportCommands",
+  "saveWorkflow",
+  "loadWorkflow",
+  "generateReport",
 ]);
 
 const templates: Template[] = [
+  {
+    kind: "manageLocalNode",
+    group: "Environment",
+    label: "Local Node Manager",
+    description: "Show safe start, stop, and status commands for the local Portaldot node",
+    command: "portaldot_dev --dev --alice",
+    config: { action: "status" },
+    icon: RadioTower,
+  },
   {
     kind: "connectRpc",
     group: "Environment",
@@ -315,6 +393,51 @@ const templates: Template[] = [
     command: "python scripts/query.py --url {endpoint}",
     config: {},
     icon: WalletCards,
+  },
+  {
+    kind: "exploreMetadata",
+    group: "Contract Lifecycle",
+    label: "Metadata Explorer",
+    description: "Parse constructors, messages, and events from ink! metadata",
+    command: "inspect metadata {metadataPath}",
+    config: { metadataPath: "contract/target/ink/membership.json" },
+    icon: FileCode2,
+  },
+  {
+    kind: "transactionPreview",
+    group: "Interaction",
+    label: "TransactionPreview",
+    description: "Estimate fee or dry-run the selected transaction before submission",
+    command: "preview {target}",
+    config: { target: "transferPot", value: "1000000000000", recipient: "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty" },
+    icon: SearchCheck,
+  },
+  {
+    kind: "dryRunCall",
+    group: "Interaction",
+    label: "Dry Run Call",
+    description: "Dry-run a payable contract message and capture gas evidence",
+    command: "python scripts/call.py --url {endpoint} --action {message} --value {value} --dry-run-only",
+    config: { message: "join", value: "100000000000000" },
+    icon: ClipboardList,
+  },
+  {
+    kind: "stateDiff",
+    group: "Interaction",
+    label: "State Diff",
+    description: "Compare account and contract state before and after a workflow step",
+    command: "portalmodeler diff state",
+    config: {},
+    icon: GitBranch,
+  },
+  {
+    kind: "decodeError",
+    group: "Utility",
+    label: "Error Decoder",
+    description: "Explain the latest failed node and suggest the next fix",
+    command: "portalmodeler decode latest-error",
+    config: {},
+    icon: Shield,
   },
   {
     kind: "transferPot",
@@ -459,7 +582,33 @@ const templates: Template[] = [
   },
 ];
 
-const flowOrder: PortalNodeKind[] = templates.map((template) => template.kind);
+const flowOrder: PortalNodeKind[] = [
+  "manageLocalNode",
+  "connectRpc",
+  "checkRuntime",
+  "checkAccount",
+  "checkBalance",
+  "transactionPreview",
+  "transferPot",
+  "buildContract",
+  "loadArtifact",
+  "exploreMetadata",
+  "deployContract",
+  "attachContract",
+  "verifyContractLive",
+  "dryRunCall",
+  "callMessage",
+  "readMessage",
+  "watchEvents",
+  "decodeEvents",
+  "stateDiff",
+  "decodeError",
+  "exportWorkflow",
+  "exportCommands",
+  "saveWorkflow",
+  "loadWorkflow",
+  "generateReport",
+];
 
 type FlowEdgeState = "planned" | "running" | "success" | "error";
 type FlowHandleId = "top" | "right" | "bottom" | "left";
@@ -476,22 +625,27 @@ function flowEdgeId(source: string, target: string, sourceHandle = "right", targ
   return `${source}-${sourceHandle}-${targetHandle}-${target}`;
 }
 
-const initialNodes: PortalFlowNode[] = templates.map((template, index) => ({
-  id: template.kind,
-  type: "portal",
-  position: { x: 80 + (index % 5) * 260, y: 80 + Math.floor(index / 5) * 190 },
-  data: {
-    kind: template.kind,
-    label: template.label,
-    description: template.description,
-    command: template.command,
-    status: index < 2 ? "success" : "ready",
-    config: template.config,
-    inputs: { ...template.config },
-    outputs: {},
-    dependsOn: index === 0 ? [] : [templates[index - 1].kind],
-  },
-}));
+const initialNodes: PortalFlowNode[] = templates.map((template, index) => {
+  const flowIndex = flowOrder.indexOf(template.kind);
+  const previousKind = flowIndex > 0 ? flowOrder[flowIndex - 1] : undefined;
+  const layoutIndex = flowIndex >= 0 ? flowIndex : index;
+  return {
+    id: template.kind,
+    type: "portal",
+    position: { x: 80 + (layoutIndex % 5) * 260, y: 80 + Math.floor(layoutIndex / 5) * 190 },
+    data: {
+      kind: template.kind,
+      label: template.label,
+      description: template.description,
+      command: template.command,
+      status: layoutIndex < 2 ? "success" : "ready",
+      config: template.config,
+      inputs: { ...template.config },
+      outputs: {},
+      dependsOn: previousKind ? [previousKind] : [],
+    },
+  };
+});
 
 function flowEdgeClass(state: FlowEdgeState) {
   return `flow-edge flow-edge--${state}`;
@@ -578,7 +732,475 @@ function hydrateCommand(template: string, config: PortalNodeConfig, endpoint = "
     .replace("{wasmPath}", config.wasmPath || "contract/target/ink/membership.wasm")
     .replace("{contractAddress}", config.contractAddress || "<contract-address>")
     .replace("{eventName}", config.eventName || "MemberJoined")
-    .replace("{message}", config.message || config.action || "is_member");
+    .replace("{message}", config.message || config.action || "is_member")
+    .replace("{target}", config.target || "transferPot");
+}
+
+function safeRustIdent(value: string, fallback: string) {
+  const normalized = value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  const ident = normalized || fallback;
+  return /^[a-zA-Z_]/.test(ident) ? ident : `_${ident}`;
+}
+
+function titleCaseIdent(value: string, fallback: string) {
+  const parts = value
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const title = parts.map((part) => `${part[0]?.toUpperCase() || ""}${part.slice(1)}`).join("");
+  return title || fallback;
+}
+
+function uniqueByName<T extends { name: string }>(items: T[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = item.name.toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function makeImportedNode(kind: PortalNodeKind, id: string, position: XYPosition, config: PortalNodeConfig = {}, patch: Partial<PortalNodeData> = {}): PortalFlowNode {
+  const template = templateForKind(kind);
+  if (!template) {
+    throw new Error(`Unsupported imported node kind: ${kind}`);
+  }
+
+  const nextConfig = { ...template.config, ...config };
+  return {
+    id,
+    type: "portal",
+    position,
+    selected: false,
+    data: {
+      kind: template.kind,
+      label: template.label,
+      description: template.description,
+      command: template.command,
+      status: "ready",
+      config: nextConfig,
+      inputs: { ...nextConfig },
+      outputs: {},
+      dependsOn: [],
+      ...patch,
+    },
+  };
+}
+
+function graphToPortalModel(nodes: PortalFlowNode[], edges: Edge[], endpoint?: string): PortalModel {
+  const hasContractNodes = nodes.some((node) =>
+    ["buildContract", "loadArtifact", "exploreMetadata", "deployContract", "attachContract", "verifyContractLive", "dryRunCall", "callMessage", "readMessage"].includes(node.data.kind),
+  );
+  const metadataEvents = nodes.flatMap((node) => (Array.isArray(node.data.outputs?.events) ? node.data.outputs.events.map(String) : []));
+  const watchedEvents = nodes.map((node) => node.data.config.eventName).filter((value): value is string => Boolean(value));
+  const readMessages = nodes
+    .filter((node) => node.data.kind === "readMessage")
+    .map((node) => node.data.config.message || "read_message");
+  const mutatingMessages = nodes
+    .filter((node) => node.data.kind === "callMessage" || node.data.kind === "dryRunCall")
+    .map((node) => node.data.config.message || "call_message");
+
+  const states = uniqueByName(
+    [
+      ...readMessages.map((message) => ({ name: safeRustIdent(message, "state"), type: "Unknown" })),
+      ...(hasContractNodes
+        ? [
+            { name: "is_member", type: "Mapping<AccountId,bool>" },
+            { name: "joined_at", type: "Mapping<AccountId,Timestamp>" },
+          ]
+        : []),
+    ],
+  );
+
+  const actions = uniqueByName(
+    [
+      ...mutatingMessages.map((message) => ({
+        name: safeRustIdent(message, "action"),
+        actor: "User",
+        requires: message === "join" ? "pay POT" : "configured inputs",
+        emits: message === "join" ? "MemberJoined" : undefined,
+      })),
+      ...(hasContractNodes && mutatingMessages.length === 0
+        ? [{ name: "join", actor: "User", requires: "pay POT", emits: "MemberJoined" }]
+        : []),
+    ],
+  );
+
+  const events = uniqueByName(
+    [...metadataEvents, ...watchedEvents, ...(hasContractNodes ? ["MemberJoined"] : [])].map((eventName) => ({
+      name: titleCaseIdent(eventName.replace(/\(.+\)$/, ""), "WorkflowEvent"),
+      fields: eventName.includes("MemberJoined") ? ["account", "joined_at", "paid"] : [],
+    })),
+  );
+
+  const workflow = workflowSequenceFromGraph(nodes, edges).map((node) => ({
+    id: node.id,
+    kind: node.data.kind,
+    label: node.data.label,
+    command: hydrateCommand(node.data.command, node.data.config, endpoint),
+  }));
+
+  return {
+    version: "0.1",
+    contract: hasContractNodes ? "Membership" : "PortalWorkflow",
+    actors: ["User", "Admin"],
+    states,
+    actions,
+    events,
+    workflow,
+  };
+}
+
+function renderInkSkeleton(model: PortalModel) {
+  const contractName = titleCaseIdent(model.contract, "PortalWorkflow");
+  const moduleName = safeRustIdent(contractName, "portal_workflow");
+  const states = model.states.length
+    ? model.states.map((state) => `        // ${state.name}: ${state.type}`).join("\n")
+    : "        // Add generated state fields here.";
+  const messages = model.actions.length
+    ? model.actions
+        .map((action) => {
+          const name = safeRustIdent(action.name, "action");
+          return `        #[ink(message)]\n        pub fn ${name}(&mut self) {\n            // actor: ${action.actor}\n            // requires: ${action.requires || "configured inputs"}\n            // emits: ${action.emits || "none"}\n            todo!("implement ${name}");\n        }`;
+        })
+        .join("\n\n")
+    : `        #[ink(message)]\n        pub fn run(&mut self) {\n            todo!("implement workflow action");\n        }`;
+
+  return `#![cfg_attr(not(feature = "std"), no_std, no_main)]\n\n#[ink::contract]\nmod ${moduleName} {\n    #[ink(storage)]\n    pub struct ${contractName} {\n${states}\n    }\n\n    impl ${contractName} {\n        #[ink(constructor)]\n        pub fn new() -> Self {\n            Self {}\n        }\n\n${messages}\n    }\n}\n`;
+}
+
+function deserializeWorkflowGraph(value: string): ImportedGraph {
+  const parsed = JSON.parse(value) as SerializedWorkflow;
+  const importedNodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+  const nextNodes = importedNodes
+    .map((node, index): PortalFlowNode | null => {
+      if (!node.id || !node.kind) {
+        return null;
+      }
+      const template = templateForKind(node.kind);
+      if (!template) {
+        return null;
+      }
+      return {
+        id: node.id,
+        type: "portal",
+        position: {
+          x: Number.isFinite(node.position?.x) ? Number(node.position?.x) : 90 + index * 260,
+          y: Number.isFinite(node.position?.y) ? Number(node.position?.y) : 180,
+        },
+        selected: false,
+        data: {
+          kind: template.kind,
+          label: template.label,
+          description: template.description,
+          command: template.command,
+          status: node.status || "ready",
+          config: { ...template.config, ...(node.config || {}) },
+          inputs: node.inputs || {},
+          outputs: node.outputs || {},
+          dependsOn: Array.isArray(node.dependsOn) ? node.dependsOn : [],
+          lastRun: node.lastRun,
+        },
+      };
+    })
+    .filter((node): node is PortalFlowNode => Boolean(node));
+  const nodeIds = new Set(nextNodes.map((node) => node.id));
+  const nextEdges = (Array.isArray(parsed.edges) ? parsed.edges : [])
+    .filter((edge) => edge.source && edge.target && nodeIds.has(edge.source) && nodeIds.has(edge.target))
+    .map((edge) =>
+      makeFlowEdge(
+        edge.source as string,
+        edge.target as string,
+        "planned",
+        (edge.sourceHandle as FlowHandleId) || undefined,
+        (edge.targetHandle as FlowHandleId) || undefined,
+      ),
+    );
+
+  return { nodes: nextNodes, edges: nextEdges, source: "flow" };
+}
+
+function looksLikePortalModel(value: unknown): value is Partial<PortalModel> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Partial<PortalModel>;
+  return Array.isArray(candidate.workflow) || Array.isArray(candidate.actions) || Array.isArray(candidate.states) || Array.isArray(candidate.events);
+}
+
+function portalModelToGraph(model: Partial<PortalModel>): ImportedGraph {
+  const contractName = model.contract || "PortalModel";
+  const baseId = safeRustIdent(contractName, "portal_model");
+  const nodes: PortalFlowNode[] = [];
+
+  nodes.push(
+    makeImportedNode("loadArtifact", `${baseId}-model`, { x: 90, y: 120 }, {}, {
+      label: `${contractName} Model`,
+      description: "Imported PortalModel architecture root",
+      outputs: {
+        contract: contractName,
+        actors: model.actors || [],
+      },
+    }),
+  );
+
+  (model.actions || []).forEach((action, index) => {
+    nodes.push(
+      makeImportedNode("callMessage", `${baseId}-action-${safeRustIdent(action.name, `action_${index}`)}`, { x: 370, y: 80 + index * 170 }, {
+        message: action.name,
+        value: action.requires?.toLowerCase().includes("pot") ? "100000000000000" : "0",
+      }, {
+        label: `Action: ${action.name}`,
+        description: `${action.actor || "User"} action imported from PortalModel`,
+        outputs: {
+          actor: action.actor,
+          requires: action.requires,
+          emits: action.emits,
+        },
+      }),
+    );
+  });
+
+  (model.states || []).forEach((state, index) => {
+    nodes.push(
+      makeImportedNode("readMessage", `${baseId}-state-${safeRustIdent(state.name, `state_${index}`)}`, { x: 650, y: 90 + index * 160 }, {
+        message: state.name,
+      }, {
+        label: `State: ${state.name}`,
+        description: `Imported state ${state.type || "Unknown"}`,
+        outputs: { stateType: state.type || "Unknown" },
+      }),
+    );
+  });
+
+  (model.events || []).forEach((event, index) => {
+    nodes.push(
+      makeImportedNode("watchEvents", `${baseId}-event-${safeRustIdent(event.name, `event_${index}`)}`, { x: 930, y: 100 + index * 160 }, {
+        eventName: event.name,
+      }, {
+        label: `Event: ${event.name}`,
+        description: "Imported event from PortalModel",
+        outputs: { fields: event.fields || [] },
+      }),
+    );
+  });
+
+  const edges = nodes
+    .filter((node) => node.id !== `${baseId}-model`)
+    .map((node) => {
+      const root = nodes[0];
+      const handles = closestFlowHandles(root, node);
+      return makeFlowEdge(root.id, node.id, "planned", handles.sourceHandle, handles.targetHandle);
+    });
+
+  return { nodes, edges, source: "portalModel" };
+}
+
+function metadataToGraph(metadata: unknown): ImportedGraph {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw new Error("Metadata import expects an ink! metadata JSON object.");
+  }
+  const spec = (metadata as { spec?: unknown }).spec;
+  if (!spec || typeof spec !== "object" || Array.isArray(spec)) {
+    throw new Error("Metadata JSON is missing spec.");
+  }
+
+  const metadataSpec = spec as {
+    contract?: string;
+    constructors?: Array<{ label?: string; args?: Array<{ label?: string }> }>;
+    messages?: Array<{ label?: string; mutates?: boolean; payable?: boolean; args?: Array<{ label?: string }> }>;
+    events?: Array<{ label?: string; args?: Array<{ label?: string }> }>;
+  };
+  const baseId = safeRustIdent(metadataSpec.contract || "metadata", "metadata");
+  const describeArgs = (args?: Array<{ label?: string }>) => (args || []).map((arg) => arg.label || "arg");
+  const nodes: PortalFlowNode[] = [
+    makeImportedNode("exploreMetadata", `${baseId}-metadata`, { x: 90, y: 130 }, {}, {
+      label: "ink! Metadata",
+      description: "Imported constructors, messages, and events from ink! metadata",
+      outputs: {
+        constructors: (metadataSpec.constructors || []).map((constructor) => constructor.label || "constructor"),
+        messages: (metadataSpec.messages || []).map((message) => message.label || "message"),
+        events: (metadataSpec.events || []).map((event) => event.label || "event"),
+      },
+    }),
+  ];
+
+  (metadataSpec.constructors || []).forEach((constructor, index) => {
+    nodes.push(
+      makeImportedNode("deployContract", `${baseId}-constructor-${safeRustIdent(constructor.label || "", `constructor_${index}`)}`, { x: 360, y: 80 + index * 165 }, {
+        constructorName: constructor.label || "new",
+        constructorArgs: JSON.stringify(describeArgs(constructor.args)),
+      }, {
+        label: `Constructor: ${constructor.label || "new"}`,
+        outputs: { args: describeArgs(constructor.args) },
+      }),
+    );
+  });
+
+  (metadataSpec.messages || []).forEach((message, index) => {
+    const kind: PortalNodeKind = message.mutates || message.payable ? "callMessage" : "readMessage";
+    nodes.push(
+      makeImportedNode(kind, `${baseId}-message-${safeRustIdent(message.label || "", `message_${index}`)}`, { x: 640, y: 80 + index * 165 }, {
+        message: message.label || "message",
+        value: message.payable ? "100000000000000" : "0",
+        args: JSON.stringify(describeArgs(message.args)),
+      }, {
+        label: `${message.mutates || message.payable ? "Call" : "Read"}: ${message.label || "message"}`,
+        description: `${message.payable ? "Payable " : ""}${message.mutates ? "mutating" : "read-only"} message imported from metadata`,
+        outputs: {
+          mutates: Boolean(message.mutates),
+          payable: Boolean(message.payable),
+          args: describeArgs(message.args),
+        },
+      }),
+    );
+  });
+
+  (metadataSpec.events || []).forEach((event, index) => {
+    nodes.push(
+      makeImportedNode("watchEvents", `${baseId}-event-${safeRustIdent(event.label || "", `event_${index}`)}`, { x: 920, y: 90 + index * 155 }, {
+        eventName: event.label || "event",
+      }, {
+        label: `Event: ${event.label || "event"}`,
+        outputs: { fields: describeArgs(event.args) },
+      }),
+    );
+  });
+
+  const root = nodes[0];
+  const edges = nodes.slice(1).map((node) => {
+    const handles = closestFlowHandles(root, node);
+    return makeFlowEdge(root.id, node.id, "planned", handles.sourceHandle, handles.targetHandle);
+  });
+  return { nodes, edges, source: "metadata" };
+}
+
+function rustSourceToPortalModel(source: string): PortalModel {
+  const moduleName = source.match(/#\s*\[\s*ink::contract\s*\]\s*mod\s+([a-zA-Z_][a-zA-Z0-9_]*)/)?.[1];
+  const contractName = source.match(/#\s*\[\s*ink\s*\(\s*storage\s*\)\s*\]\s*pub\s+struct\s+([A-Za-z_][A-Za-z0-9_]*)/)?.[1] || titleCaseIdent(moduleName || "ImportedContract", "ImportedContract");
+  const storageBody = source.match(/#\s*\[\s*ink\s*\(\s*storage\s*\)\s*\]\s*pub\s+struct\s+[A-Za-z_][A-Za-z0-9_]*\s*\{([\s\S]*?)\n\s*\}/)?.[1] || "";
+  const states = uniqueByName(
+    [...storageBody.matchAll(/^\s*(?:pub\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*([^,\n]+),?/gm)].map((match) => ({
+      name: match[1],
+      type: match[2].trim(),
+    })),
+  );
+
+  const events = uniqueByName(
+    [...source.matchAll(/#\s*\[\s*ink\s*\(\s*event\s*\)\s*\]\s*pub\s+struct\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{([\s\S]*?)\n\s*\}/g)].map((match) => ({
+      name: match[1],
+      fields: [...match[2].matchAll(/^\s*(?:#\s*\[\s*ink\s*\(\s*topic\s*\)\s*\]\s*)?(?:pub\s+)?([a-zA-Z_][a-zA-Z0-9_]*)\s*:/gm)].map((field) => field[1]),
+    })),
+  );
+
+  const messages = [...source.matchAll(/#\s*\[\s*ink\s*\(\s*message([^)]*)\)\s*\]\s*pub\s+fn\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^)]*)\)/g)];
+  const actions = uniqueByName(
+    messages
+      .filter((match) => /&mut\s+self/.test(match[3]) || /payable/.test(match[1]))
+      .map((match) => ({
+        name: match[2],
+        actor: "User",
+        requires: /payable/.test(match[1]) ? "pay POT" : "configured inputs",
+        emits: events.find((event) => source.includes(`emit_event(${event.name}`))?.name,
+      })),
+  );
+  const readStates = messages
+    .filter((match) => !/&mut\s+self/.test(match[3]) && !actions.some((action) => action.name === match[2]))
+    .map((match) => ({ name: match[2], type: "Read message" }));
+
+  return {
+    version: "0.1",
+    contract: contractName,
+    actors: ["User", "Admin"],
+    states: uniqueByName([...states, ...readStates]),
+    actions,
+    events,
+    workflow: [],
+  };
+}
+
+function importTextToGraph(value: string, filename = ""): ImportedGraph {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error("Import file is empty.");
+  }
+  if (filename.toLowerCase().endsWith(".rs") || trimmed.includes("#[ink::contract]") || trimmed.includes("#[ink(message")) {
+    return { ...portalModelToGraph(rustSourceToPortalModel(trimmed)), source: "rust" };
+  }
+
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray((parsed as SerializedWorkflow).nodes)) {
+    return deserializeWorkflowGraph(trimmed);
+  }
+  if (looksLikePortalModel(parsed)) {
+    return portalModelToGraph(parsed);
+  }
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && (parsed as { spec?: unknown }).spec) {
+    return metadataToGraph(parsed);
+  }
+
+  throw new Error("Unsupported import format. Use Flow JSON, PortalModel JSON, ink! metadata JSON, or an ink! Rust source file.");
+}
+
+function prepareImportedGraph(imported: ImportedGraph, mode: "replace" | "merge", currentNodes: PortalFlowNode[]): ImportedGraph {
+  if (mode === "replace") {
+    return imported;
+  }
+
+  const timestamp = Date.now();
+  const existingIds = new Set(currentNodes.map((node) => node.id));
+  const idMap = new Map<string, string>();
+  imported.nodes.forEach((node) => {
+    const nextId = existingIds.has(node.id) ? `import-${timestamp}-${node.id}` : node.id;
+    idMap.set(node.id, nextId);
+    existingIds.add(nextId);
+  });
+
+  const offset = { x: 80 + (currentNodes.length % 4) * 28, y: 80 + (currentNodes.length % 5) * 24 };
+  return {
+    source: imported.source,
+    nodes: imported.nodes.map((node) => ({
+      ...node,
+      id: idMap.get(node.id) || node.id,
+      selected: false,
+      position: { x: node.position.x + offset.x, y: node.position.y + offset.y },
+      data: {
+        ...node.data,
+        dependsOn: node.data.dependsOn.map((id) => idMap.get(id) || id),
+      },
+    })),
+    edges: imported.edges
+      .map((edge) => {
+        const source = idMap.get(edge.source);
+        const target = idMap.get(edge.target);
+        if (!source || !target) {
+          return null;
+        }
+        return makeFlowEdge(source, target, "planned", (edge.sourceHandle || "right") as FlowHandleId, (edge.targetHandle || "left") as FlowHandleId);
+      })
+      .filter((edge): edge is Edge => Boolean(edge)),
+  };
+}
+
+function downloadTextFile(filename: string, content: string, type = "text/plain") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function templateForKind(kind: PortalNodeKind) {
@@ -619,7 +1241,7 @@ function planWorkflowFromPrompt(prompt: string, currentEndpoint?: string): AiPla
     errors.push("RPC endpoint must start with ws:// or wss://.");
   }
 
-  const recipient = trimmedPrompt.match(/\b5[1-9A-HJ-NP-Za-km-z]{20,}\b/)?.[0] || "";
+  const recipient = trimmedPrompt.match(/\b5[1-9A-HJ-NP-Za-km-z]{20,}\b/)?.[0] || (/\bbob\b/i.test(trimmedPrompt) ? "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty" : "");
   if (!recipient) {
     errors.push("Transfer flow needs a recipient SS58 address that starts with 5.");
   }
@@ -651,14 +1273,14 @@ function planWorkflowFromPrompt(prompt: string, currentEndpoint?: string): AiPla
   };
 }
 
-function buildNodesFromAiPlan(plan: AiFlowPlan): PortalFlowNode[] {
+function buildNodesFromAiPlan(plan: AiFlowPlan, idPrefix = ""): PortalFlowNode[] {
   return plan.steps.map((step, index) => {
     const template = templateForKind(step.kind);
     if (!template) {
       throw new Error(`Unsupported AI node kind: ${step.kind}`);
     }
 
-    const id = step.kind;
+    const id = idPrefix ? `${idPrefix}-${step.kind}` : step.kind;
     const config = { ...template.config, ...step.config };
     return {
       id,
@@ -673,18 +1295,20 @@ function buildNodesFromAiPlan(plan: AiFlowPlan): PortalFlowNode[] {
         config,
         inputs: { ...config },
         outputs: {},
-        dependsOn: index === 0 ? [] : [plan.steps[index - 1].kind],
+        dependsOn: index === 0 ? [] : [idPrefix ? `${idPrefix}-${plan.steps[index - 1].kind}` : plan.steps[index - 1].kind],
       },
     };
   });
 }
 
-function buildEdgesFromAiPlan(plan: AiFlowPlan, nodes: PortalFlowNode[]) {
+function buildEdgesFromAiPlan(plan: AiFlowPlan, nodes: PortalFlowNode[], idPrefix = "") {
   return plan.edges.map(([source, target]) => {
-    const sourceNode = nodes.find((node) => node.id === source);
-    const targetNode = nodes.find((node) => node.id === target);
+    const sourceId = idPrefix ? `${idPrefix}-${source}` : source;
+    const targetId = idPrefix ? `${idPrefix}-${target}` : target;
+    const sourceNode = nodes.find((node) => node.id === sourceId);
+    const targetNode = nodes.find((node) => node.id === targetId);
     const handles = sourceNode && targetNode ? closestFlowHandles(sourceNode, targetNode) : undefined;
-    return makeFlowEdge(source, target, "planned", handles?.sourceHandle, handles?.targetHandle);
+    return makeFlowEdge(sourceId, targetId, "planned", handles?.sourceHandle, handles?.targetHandle);
   });
 }
 
@@ -736,12 +1360,15 @@ type AiFlowModalProps = {
   prompt: string;
   result: AiPlannerResult | null;
   needsRunConfirm: boolean;
+  generating: boolean;
+  replaceBoard: boolean;
   onClose: () => void;
   onPromptChange: (value: string) => void;
   onGenerate: () => void;
   onApply: () => void;
   onApplyAndRun: () => void;
   onConfirmRunChange: (value: boolean) => void;
+  onReplaceBoardChange: (value: boolean) => void;
 };
 
 function AiFlowModal({
@@ -749,12 +1376,15 @@ function AiFlowModal({
   prompt,
   result,
   needsRunConfirm,
+  generating,
+  replaceBoard,
   onClose,
   onPromptChange,
   onGenerate,
   onApply,
   onApplyAndRun,
   onConfirmRunChange,
+  onReplaceBoardChange,
 }: AiFlowModalProps) {
   if (!open) {
     return null;
@@ -762,6 +1392,7 @@ function AiFlowModal({
 
   const plan = result?.plan || null;
   const errors = result?.errors || [];
+  const warnings = result?.warnings || [];
 
   return (
     <div className="ai-modal-overlay" role="presentation" onMouseDown={onClose}>
@@ -774,7 +1405,11 @@ function AiFlowModal({
       >
         <div className="ai-modal__header">
           <div>
-            <span className="ai-modal__eyebrow">Local planner</span>
+            <span className="ai-modal__eyebrow">
+              {result?.source === "openai" || result?.source === "openrouter" || result?.source === "gemini"
+                ? `${result.source === "gemini" ? "Gemini" : result.source === "openrouter" ? "OpenRouter" : "OpenAI"} planner${result.model ? ` · ${result.model}` : ""}`
+                : "Safe planner"}
+            </span>
             <h2 id="ai-flow-title">AI Flow Builder</h2>
           </div>
           <button className="icon-button ai-modal__close" type="button" aria-label="Close AI Flow Builder" onClick={onClose}>
@@ -792,9 +1427,9 @@ function AiFlowModal({
         </label>
 
         <div className="ai-modal__actions">
-          <button className="text-button" type="button" onClick={onGenerate}>
+          <button className="text-button" type="button" onClick={onGenerate} disabled={generating}>
             <Sparkles size={16} />
-            Generate flow
+            {generating ? "Generating..." : "Generate flow"}
           </button>
         </div>
 
@@ -802,6 +1437,14 @@ function AiFlowModal({
           <div className="ai-errors" role="alert">
             {errors.map((error) => (
               <div key={error}>{error}</div>
+            ))}
+          </div>
+        ) : null}
+
+        {warnings.length > 0 ? (
+          <div className="ai-warnings" role="status">
+            {warnings.map((warning) => (
+              <div key={warning}>{warning}</div>
             ))}
           </div>
         ) : null}
@@ -834,6 +1477,14 @@ function AiFlowModal({
               />
               <span>I understand Apply & run may submit a real local transfer transaction.</span>
             </label>
+            <label className="ai-run-confirm">
+              <input
+                type="checkbox"
+                checked={replaceBoard}
+                onChange={(event) => onReplaceBoardChange(event.target.checked)}
+              />
+              <span>Replace the current board instead of appending this AI flow.</span>
+            </label>
           </div>
         ) : null}
 
@@ -844,7 +1495,7 @@ function AiFlowModal({
           <button className="text-button" type="button" onClick={onApply} disabled={!plan}>
             Apply to board
           </button>
-          <button className="text-button active-mode" type="button" onClick={onApplyAndRun} disabled={!plan || !needsRunConfirm}>
+          <button className="text-button active-mode" type="button" onClick={onApplyAndRun} disabled={!plan || !needsRunConfirm || !replaceBoard}>
             <Play size={16} />
             Apply & run
           </button>
@@ -1367,6 +2018,9 @@ function dependencyOutputsForNode(node: PortalFlowNode, context: WorkflowContext
 }
 
 const workflowValidationRules: Partial<Record<PortalNodeKind, NodeValidationRule>> = {
+  manageLocalNode: {
+    dependencies: [],
+  },
   connectRpc: {
     dependencies: [],
     validate: (node) => {
@@ -1409,6 +2063,71 @@ const workflowValidationRules: Partial<Record<PortalNodeKind, NodeValidationRule
       { kinds: ["checkAccount"], reason: "Check Balance requires a successful Check Account node." },
     ],
   },
+  exploreMetadata: {
+    dependencies: [
+      {
+        kinds: ["buildContract", "loadArtifact"],
+        mode: "any",
+        reason: "Metadata Explorer works best after Build Contract or Load Artifact.",
+        blocking: false,
+      },
+    ],
+    validate: (node, context) => {
+      const warnings: string[] = [];
+      const reasons: string[] = [];
+      if (!node.data.config.metadataPath) {
+        reasons.push("Metadata JSON path is required.");
+      }
+      if (!context.health?.artifactsReady) {
+        warnings.push("Metadata may be missing. Build the contract or point this node at a metadata JSON file.");
+      }
+      return { ok: reasons.length === 0, reasons, warnings };
+    },
+  },
+  transactionPreview: {
+    dependencies: [
+      { kinds: ["connectRpc"], reason: "Transaction Preview requires a successful Connect RPC node." },
+      { kinds: ["checkAccount"], reason: "Transaction Preview requires a successful Check Account node." },
+    ],
+    validate: (node, context) => {
+      const reasons: string[] = [];
+      const hints: string[] = [];
+      if (!context.health?.rpcReachable) {
+        reasons.push("RPC endpoint is offline.");
+      }
+      if ((node.data.config.target || "transferPot") === "transferPot" && !isNumericString(node.data.config.value)) {
+        reasons.push("Transfer preview amount must be a base-unit integer.");
+      }
+      if ((node.data.config.target || "transferPot") === "callMessage" && !node.data.config.message) {
+        reasons.push("Contract call preview needs a message.");
+      }
+      hints.push("Preview nodes estimate or dry-run only; they do not submit state changes.");
+      return { ok: reasons.length === 0, reasons, hints };
+    },
+  },
+  dryRunCall: {
+    dependencies: [
+      { kinds: ["connectRpc"], reason: "Dry Run Call requires a successful Connect RPC node." },
+      { kinds: ["loadArtifact"], reason: "Dry Run Call requires loaded metadata." },
+      { kinds: ["deployContract", "attachContract", "verifyContractLive"], mode: "any", reason: "Dry Run Call requires a live deployed or attached contract." },
+    ],
+    validate: (node, context) => {
+      const reasons: string[] = [];
+      const warnings: string[] = [];
+      if (!context.health?.contractReachable) {
+        reasons.push("A live contract address is required on the current chain.");
+      }
+      if ((node.data.config.message || "join") !== "join") {
+        warnings.push("The current Python call script can dry-run the Membership join message. Other messages are metadata-visible but not executable yet.");
+      }
+      if (!isNumericString(node.data.config.value)) {
+        reasons.push("Dry-run value must be a base-unit integer.");
+      }
+      return { ok: reasons.length === 0, reasons, warnings };
+    },
+  },
+  stateDiff: { dependencies: [] },
+  decodeError: { dependencies: [] },
   transferPot: {
     dependencies: [
       { kinds: ["connectRpc"], reason: "Transfer POT requires a successful Connect RPC node." },
@@ -1640,10 +2359,16 @@ function validateDependencyRule(rule: NodeDependencyRule, context: WorkflowConte
 
 function executableNodeKinds() {
   return new Set<PortalNodeKind>([
+    "manageLocalNode",
     "connectRpc",
     "checkRuntime",
     "checkAccount",
     "checkBalance",
+    "exploreMetadata",
+    "transactionPreview",
+    "dryRunCall",
+    "stateDiff",
+    "decodeError",
     "transferPot",
     "buildContract",
     "loadArtifact",
@@ -1714,6 +2439,10 @@ function collectNodeOutputs(node: PortalFlowNode, result: ApiRunResult, context:
     stdout: result.stdout || "",
   };
 
+  if (node.data.kind === "manageLocalNode") {
+    outputs.action = node.data.config.action || "status";
+    outputs.endpoint = context.endpoint || "ws://127.0.0.1:9944";
+  }
   if (node.data.kind === "connectRpc") {
     outputs.endpoint = node.data.config.endpoint || context.endpoint || "ws://127.0.0.1:9944";
     outputs.rpcReachable = Boolean(result.ok);
@@ -1731,6 +2460,22 @@ function collectNodeOutputs(node: PortalFlowNode, result: ApiRunResult, context:
     outputs.freeBalance = context.snapshot?.account.freeBalance || "";
     outputs.tokenSymbol = context.snapshot?.account.token || "";
     outputs.nonce = context.snapshot?.account.nonce || "";
+  }
+  if (node.data.kind === "exploreMetadata") {
+    const parsed = parseMetadataSummary(result.stdout || "");
+    outputs.constructors = parsed.constructors;
+    outputs.messages = parsed.messages;
+    outputs.events = parsed.events;
+  }
+  if (node.data.kind === "transactionPreview") {
+    outputs.target = node.data.config.target || "transferPot";
+    outputs.estimatedFee = (result.stdout || "").match(/Estimated fee:\s*(.+)/)?.[1] || "";
+    outputs.gasRequired = (result.stdout || "").match(/Dry-run gas required:\s*(.+)/)?.[1] || "";
+  }
+  if (node.data.kind === "dryRunCall") {
+    outputs.message = node.data.config.message || "join";
+    outputs.value = node.data.config.value || "0";
+    outputs.gasRequired = (result.stdout || "").match(/Dry-run gas required:\s*(.+)/)?.[1] || "";
   }
   if (node.data.kind === "transferPot") {
     outputs.recipient = node.data.config.recipient || "";
@@ -1765,8 +2510,60 @@ function collectNodeOutputs(node: PortalFlowNode, result: ApiRunResult, context:
   if (node.data.kind === "watchEvents" || node.data.kind === "decodeEvents") {
     outputs.eventTimeline = context.snapshot?.events || [];
   }
+  if (node.data.kind === "stateDiff") {
+    outputs.diff = buildStateDiff(context.snapshot, context.previousSnapshot as ChainSnapshot | null | undefined);
+  }
+  if (node.data.kind === "decodeError") {
+    outputs.explanation = decodeLatestRunError(context.nodes);
+  }
 
   return outputs;
+}
+
+function parseMetadataSummary(stdout: string): MetadataSummary {
+  try {
+    const marker = "Metadata summary JSON:";
+    const jsonText = stdout.includes(marker) ? stdout.slice(stdout.indexOf(marker) + marker.length).trim() : stdout.trim();
+    const parsed = JSON.parse(jsonText) as Partial<MetadataSummary>;
+    return {
+      constructors: parsed.constructors || [],
+      messages: parsed.messages || [],
+      events: parsed.events || [],
+    };
+  } catch {
+    return { constructors: [], messages: [], events: [] };
+  }
+}
+
+function buildStateDiff(current?: ChainSnapshot | null, previous?: ChainSnapshot | null) {
+  if (!current) {
+    return ["Snapshot is not loaded yet."];
+  }
+
+  const rows = [
+    ["account.freeBalance", previous?.account.freeBalance || "unknown", current.account.freeBalance || "unknown"],
+    ["account.nonce", previous?.account.nonce || "unknown", current.account.nonce || "unknown"],
+    ["contract.reachable", previous?.contract.reachable === undefined ? "unknown" : String(previous.contract.reachable), String(current.contract.reachable)],
+    ["state.isMember", previous?.state.isMember === undefined ? "unknown" : String(previous.state.isMember), String(current.state.isMember)],
+    ["state.joinedAt", previous?.state.joinedAt || "unknown", current.state.joinedAt || "unknown"],
+  ];
+
+  return rows.map(([label, before, after]) => `${label}: ${before} -> ${after}`);
+}
+
+function decodeLatestRunError(nodes: PortalFlowNode[]) {
+  const failed = [...nodes].reverse().find((node) => node.data.status === "error" || node.data.status === "blocked");
+  if (!failed) {
+    return "No failed or blocked node found on the board.";
+  }
+
+  const text = [failed.data.lastRun?.stdout, failed.data.lastRun?.stderr, ...(failed.data.lastRun?.hints || [])].filter(Boolean).join("\n");
+  const hints = explainRunIssue({ stdout: failed.data.lastRun?.stdout, stderr: failed.data.lastRun?.stderr });
+  return [
+    `Latest issue: ${failed.data.label} (${failed.data.status})`,
+    text || "No stderr/stdout was captured for this node.",
+    ...hints.map((hint) => `Suggested fix: ${hint}`),
+  ].join("\n");
 }
 
 function postValidate(node: PortalFlowNode, executeResult: ExecuteResult, context: WorkflowContext): ValidationResult {
@@ -2236,8 +3033,12 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiPlannerResult, setAiPlannerResult] = useState<AiPlannerResult | null>(null);
+  const [aiGenerating, setAiGenerating] = useState(false);
   const [aiRunConfirm, setAiRunConfirm] = useState(false);
+  const [aiReplaceBoard, setAiReplaceBoard] = useState(false);
   const [runAfterAiApply, setRunAfterAiApply] = useState(false);
+  const [importMode, setImportMode] = useState<"replace" | "merge">("replace");
+  const importFlowInputRef = useRef<HTMLInputElement | null>(null);
 
   const selectedNode = nodes.find((node) => node.id === selectedNodeId) || null;
   const selectedNodes = useMemo(
@@ -2258,7 +3059,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
 
   const commandLines = useMemo(() => {
     return orderedNodes
-      .filter((node) => !["watchEvents", "decodeEvents", "exportWorkflow", "exportCommands", "saveWorkflow", "loadWorkflow", "generateReport"].includes(node.data.kind))
+      .filter((node) => !browserHelperNodeKinds.has(node.data.kind))
       .map((node) => hydrateCommand(node.data.command, node.data.config, endpoint));
   }, [endpoint, orderedNodes]);
 
@@ -2266,7 +3067,24 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     const steps = orderedNodes
       .map((node, index) => `${index + 1}. ${node.data.label}: \`${hydrateCommand(node.data.command, node.data.config, endpoint)}\``)
       .join("\n");
-    return `# PortalModeler Membership Flow\n\n${steps}\n`;
+    const evidence = orderedNodes
+      .filter((node) => Object.keys(node.data.outputs || {}).length > 0)
+      .map((node) => {
+        const outputs = node.data.outputs || {};
+        const important = [
+          outputs.extrinsicHash ? `extrinsic: ${outputs.extrinsicHash}` : "",
+          outputs.blockHash ? `block: ${outputs.blockHash}` : "",
+          outputs.estimatedFee ? `estimated fee: ${outputs.estimatedFee}` : "",
+          outputs.gasRequired ? `gas required: ${outputs.gasRequired}` : "",
+          Array.isArray(outputs.messages) && outputs.messages.length ? `messages: ${outputs.messages.join(", ")}` : "",
+          Array.isArray(outputs.diff) && outputs.diff.length ? `state diff: ${outputs.diff.join("; ")}` : "",
+          outputs.explanation ? `error explanation: ${outputs.explanation}` : "",
+        ].filter(Boolean);
+        return important.length ? `- ${node.data.label}: ${important.join(" | ")}` : "";
+      })
+      .filter(Boolean)
+      .join("\n");
+    return `# PortalModeler Membership Flow\n\n## Commands\n\n${steps}\n\n## Evidence\n\n${evidence || "No run evidence captured yet."}\n`;
   }, [endpoint, orderedNodes]);
 
   const graphExport = useMemo(() => {
@@ -2295,6 +3113,9 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       2,
     );
   }, [edges, nodes]);
+  const portalModel = useMemo(() => graphToPortalModel(nodes, edges, endpoint), [edges, endpoint, nodes]);
+  const portalModelExport = useMemo(() => JSON.stringify(portalModel, null, 2), [portalModel]);
+  const inkSkeletonExport = useMemo(() => renderInkSkeleton(portalModel), [portalModel]);
 
   const onConnect = useCallback(
     (connection: Connection) => {
@@ -2413,6 +3234,108 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
 
   function pushLog(log: Omit<RunLog, "id">) {
     setRunLogs((current) => [{ id: `${Date.now()}-${current.length}`, ...log }, ...current].slice(0, 18));
+  }
+
+  async function copyTextArtifact(label: string, content: string) {
+    try {
+      await navigator.clipboard.writeText(content);
+      pushLog({
+        level: "success",
+        title: `${label} copied`,
+        body: `${label} is now on the clipboard.`,
+      });
+    } catch (error) {
+      pushLog({
+        level: "error",
+        title: `${label} copy failed`,
+        body: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  function downloadArtifact(label: string, filename: string, content: string, type = "text/plain") {
+    downloadTextFile(filename, content, type);
+    pushLog({
+      level: "success",
+      title: `${label} exported`,
+      body: `${filename} was generated from the current visual board.`,
+    });
+  }
+
+  async function importFlowFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const imported = prepareImportedGraph(importTextToGraph(text, file.name), importMode, nodes);
+      if (imported.nodes.length === 0) {
+        pushLog({
+          level: "warning",
+          title: "Import skipped",
+          body: "The selected file did not contain supported PortalModeler nodes.",
+        });
+        return;
+      }
+
+      if (importMode === "merge") {
+        setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), ...imported.nodes]);
+        setEdges((current) => [...current.map((edge) => ({ ...edge, selected: false })), ...imported.edges]);
+      } else {
+        setNodes(imported.nodes);
+        setEdges(imported.edges);
+      }
+      setSelectedNodeId(imported.nodes[0]?.id || "");
+      setSelectedNodeIds(imported.nodes[0] ? [imported.nodes[0].id] : []);
+      setSelectedEdgeIds([]);
+      pushLog({
+        level: "success",
+        title: `${imported.source === "flow" ? "Flow" : imported.source === "portalModel" ? "PortalModel" : imported.source === "metadata" ? "Metadata" : "Rust source"} imported`,
+        body: `${importMode === "merge" ? "Merged" : "Loaded"} ${imported.nodes.length} node${imported.nodes.length === 1 ? "" : "s"} and ${imported.edges.length} line${imported.edges.length === 1 ? "" : "s"} from ${file.name}.`,
+      });
+    } catch (error) {
+      pushLog({
+        level: "error",
+        title: "Flow import failed",
+        body: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function pasteRustSourceImport() {
+    try {
+      let text = "";
+      try {
+        text = await navigator.clipboard.readText();
+      } catch {
+        text = window.prompt("Paste ink! Rust source code to generate a visual board:") || "";
+      }
+      const imported = prepareImportedGraph(importTextToGraph(text, "pasted.rs"), importMode, nodes);
+      if (importMode === "merge") {
+        setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), ...imported.nodes]);
+        setEdges((current) => [...current.map((edge) => ({ ...edge, selected: false })), ...imported.edges]);
+      } else {
+        setNodes(imported.nodes);
+        setEdges(imported.edges);
+      }
+      setSelectedNodeId(imported.nodes[0]?.id || "");
+      setSelectedNodeIds(imported.nodes[0] ? [imported.nodes[0].id] : []);
+      setSelectedEdgeIds([]);
+      pushLog({
+        level: "success",
+        title: "Rust source imported",
+        body: `${importMode === "merge" ? "Merged" : "Loaded"} ${imported.nodes.length} architecture node${imported.nodes.length === 1 ? "" : "s"} from pasted ink! source. Rust source parsing is a guarded prototype for common ink! patterns.`,
+      });
+    } catch (error) {
+      pushLog({
+        level: "error",
+        title: "Rust source import failed",
+        body: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   function addTemplate(template: Template, position?: { x: number; y: number }) {
@@ -2593,10 +3516,72 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     setAiRunConfirm(false);
   }
 
-  function generateAiFlow() {
-    const result = planWorkflowFromPrompt(aiPrompt, endpoint);
-    setAiPlannerResult(result);
+  function providerLabel(source?: AiPlannerResult["source"]) {
+    if (source === "gemini") return "Gemini";
+    if (source === "openrouter") return "OpenRouter";
+    if (source === "openai") return "OpenAI";
+    return "AI";
+  }
+
+  async function generateAiFlow() {
+    const trimmedPrompt = aiPrompt.trim();
+    if (!trimmedPrompt) {
+      setAiPlannerResult({ plan: null, errors: ["Enter a prompt before generating a flow."], source: "local" });
+      setAiRunConfirm(false);
+      return;
+    }
+
+    setAiGenerating(true);
+    setAiPlannerResult(null);
     setAiRunConfirm(false);
+
+    try {
+      const response = await fetch("/api/ai-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: trimmedPrompt,
+          endpoint: endpoint || "ws://127.0.0.1:9944",
+          availableKinds: templates.map((template) => template.kind),
+        }),
+      });
+      const result = (await response.json()) as AiPlannerResult;
+      if (response.ok && result.plan) {
+        setAiPlannerResult(result);
+        pushLog({
+          level: "info",
+          title: "AI planner generated flow",
+          body: `${result.source === "gemini" ? "Gemini" : result.source === "openrouter" ? "OpenRouter" : result.source === "openai" ? "OpenAI" : "Local fallback"} created ${result.plan.steps.length} planned node${result.plan.steps.length === 1 ? "" : "s"}.`,
+        });
+        return;
+      }
+
+      const fallback = planWorkflowFromPrompt(trimmedPrompt, endpoint);
+      const providerError = result.errors?.length ? `${providerLabel(result.source)} planner unavailable: ${result.errors.join(" ")}` : "";
+      setAiPlannerResult({
+        plan: fallback.plan,
+        source: fallback.plan && !providerError ? result.source || "local" : "local",
+        model: fallback.plan && !providerError ? result.model : undefined,
+        errors: fallback.plan
+          ? providerError ? [providerError] : []
+          : [providerError || "AI planner returned no valid workflow.", ...fallback.errors.map((error) => `Local fallback: ${error}`)],
+        warnings: result.warnings || [],
+      });
+    } catch (error) {
+      const fallback = planWorkflowFromPrompt(trimmedPrompt, endpoint);
+      setAiPlannerResult({
+        plan: fallback.plan,
+        source: "local",
+        errors: fallback.plan
+          ? [`AI planner unavailable: ${error instanceof Error ? error.message : String(error)}`]
+          : [
+              `AI planner unavailable: ${error instanceof Error ? error.message : String(error)}`,
+              ...fallback.errors.map((fallbackError) => `Local fallback: ${fallbackError}`),
+            ],
+      });
+    } finally {
+      setAiGenerating(false);
+    }
   }
 
   function applyAiPlan(runAfterApply = false) {
@@ -2604,12 +3589,25 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       return;
     }
 
-    const nextNodes = buildNodesFromAiPlan(aiPlannerResult.plan);
-    const nextEdges = buildEdgesFromAiPlan(aiPlannerResult.plan, nextNodes);
+    const idPrefix = aiReplaceBoard ? "" : `ai-${Date.now()}`;
+    const nextNodes = buildNodesFromAiPlan(aiPlannerResult.plan, idPrefix);
+    const nextEdges = buildEdgesFromAiPlan(aiPlannerResult.plan, nextNodes, idPrefix);
     const selectedId = nextNodes[nextNodes.length - 1]?.id || "";
 
-    setNodes(nextNodes.map((node) => ({ ...node, selected: node.id === selectedId })));
-    setEdges(nextEdges);
+    if (aiReplaceBoard) {
+      setNodes(nextNodes.map((node) => ({ ...node, selected: node.id === selectedId })));
+      setEdges(nextEdges);
+    } else {
+      setNodes((current) => [
+        ...current.map((node) => ({ ...node, selected: false })),
+        ...nextNodes.map((node) => ({
+          ...node,
+          selected: node.id === selectedId,
+          position: { x: node.position.x + 80, y: node.position.y + 80 },
+        })),
+      ]);
+      setEdges((current) => [...current.map((edge) => ({ ...edge, selected: false })), ...nextEdges]);
+    }
     setSelectedNodeId(selectedId);
     setSelectedNodeIds(selectedId ? [selectedId] : []);
     setSelectedEdgeIds([]);
@@ -2620,7 +3618,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     pushLog({
       level: "info",
       title: "AI flow applied",
-      body: `${aiPlannerResult.plan.title} created ${nextNodes.length} nodes and ${nextEdges.length} lines from the local planner.`,
+      body: `${aiPlannerResult.plan.title} ${aiReplaceBoard ? "replaced the board with" : "appended"} ${nextNodes.length} nodes and ${nextEdges.length} lines from the ${aiPlannerResult.source === "gemini" ? "Gemini planner" : aiPlannerResult.source === "openrouter" ? "OpenRouter planner" : aiPlannerResult.source === "openai" ? "OpenAI planner" : "local planner"}.`,
     });
   }
 
@@ -2718,7 +3716,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       const executed = await execute(node, context);
       const nextHealth = await refreshHealth();
       const nextSnapshot = await refreshSnapshot();
-      const refreshedContext = { ...context, health: nextHealth, snapshot: nextSnapshot };
+      const refreshedContext = { ...context, health: nextHealth, snapshot: nextSnapshot, previousSnapshot: context.snapshot };
       const outputs = collectNodeOutputs(node, { ...executed.result, ok: executed.ok }, refreshedContext);
       executed.outputs = outputs;
       const postflight = postValidate(node, executed, refreshedContext);
@@ -2944,12 +3942,15 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
         prompt={aiPrompt}
         result={aiPlannerResult}
         needsRunConfirm={aiRunConfirm}
+        generating={aiGenerating}
+        replaceBoard={aiReplaceBoard}
         onClose={closeAiModal}
         onPromptChange={updateAiPrompt}
         onGenerate={generateAiFlow}
         onApply={() => applyAiPlan(false)}
         onApplyAndRun={() => applyAiPlan(true)}
         onConfirmRunChange={setAiRunConfirm}
+        onReplaceBoardChange={setAiReplaceBoard}
       />
 
       <section className="workflow-strip" aria-label="Membership workflow readiness">
@@ -3303,6 +4304,50 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       </section>
 
       <section className="bottom-panel">
+        <div className="export-toolbar" aria-label="One-click export and conversion">
+          <div className="export-toolbar__title">
+            <Download size={18} />
+            <div>
+              <span>One-click artifacts</span>
+              <strong>Export or restore the current visual workflow</strong>
+            </div>
+          </div>
+          <div className="export-toolbar__actions">
+            <button className="text-button quiet" title="Copy generated command sheet" onClick={() => copyTextArtifact("Command sheet", commandLines.join("\n"))}>
+              <Copy size={16} />
+              Copy commands
+            </button>
+            <button className="text-button quiet" title="Download workflow commands as Markdown" onClick={() => downloadArtifact("Commands", "portalmodeler-commands.md", markdownExport, "text/markdown")}>
+              <Download size={16} />
+              Commands.md
+            </button>
+            <button className="text-button quiet" title="Download draggable graph JSON" onClick={() => downloadArtifact("Flow JSON", "portalmodeler-flow.json", graphExport, "application/json")}>
+              <GitBranch size={16} />
+              Flow JSON
+            </button>
+            <button className="text-button quiet" title="Download normalized PortalModel JSON" onClick={() => downloadArtifact("PortalModel JSON", "portalmodel.json", portalModelExport, "application/json")}>
+              <FileText size={16} />
+              Model JSON
+            </button>
+            <button className="text-button quiet" title="Download generated ink! skeleton" onClick={() => downloadArtifact("ink skeleton", "generated-lib.rs", inkSkeletonExport, "text/plain")}>
+              <FileCode2 size={16} />
+              ink! skeleton
+            </button>
+            <button className={`text-button quiet ${importMode === "merge" ? "active-mode" : ""}`} title="Toggle whether imports replace the board or merge into it" onClick={() => setImportMode((mode) => (mode === "replace" ? "merge" : "replace"))}>
+              <Plus size={16} />
+              {importMode === "merge" ? "Merge import" : "Replace import"}
+            </button>
+            <button className="text-button quiet" title="Import Flow JSON, PortalModel JSON, ink! metadata JSON, or an ink! Rust source file" onClick={() => importFlowInputRef.current?.click()}>
+              <Upload size={16} />
+              Import file
+            </button>
+            <button className="text-button quiet" title="Paste ink! Rust source from clipboard and generate a visual board" onClick={pasteRustSourceImport}>
+              <FileCode2 size={16} />
+              Paste code
+            </button>
+            <input ref={importFlowInputRef} className="visually-hidden" type="file" accept="application/json,.json,.rs,text/plain" onChange={importFlowFile} />
+          </div>
+        </div>
         <div className="export-pane">
           <div className="panel-heading">
             <GitBranch size={18} />
@@ -3323,6 +4368,13 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
             <span>Markdown Export</span>
           </div>
           <pre>{markdownExport}</pre>
+        </div>
+        <div className="export-pane">
+          <div className="panel-heading">
+            <ClipboardList size={18} />
+            <span>Selected Outputs</span>
+          </div>
+          <pre>{selectedNode ? JSON.stringify(selectedNode.data.outputs || {}, null, 2) : "No node selected"}</pre>
         </div>
       </section>
     </main>

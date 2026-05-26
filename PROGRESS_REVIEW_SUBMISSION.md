@@ -1,4 +1,4 @@
-# PortalModeler - Progress Review Submission
+﻿# PortalModeler - Progress Review Submission
 
 Discord thread title:
 
@@ -32,6 +32,8 @@ Reason: the local Portaldot node was restarted cleanly with `--tmp`, block produ
 
 Scope note: the Membership ink! contract flow remains in the repo as the extended contract demo, but it is **not** the checkpoint-critical Green flow because the current Portaldot local contracts runtime rejects the ink! 5 constructor/deploy path. The stable MVP flow for checkpoint is the smaller Portaldot action workflow: balance -> fee estimate -> transfer -> events.
 
+AI note: the AI Flow Builder can now call Gemini through the server-side `/api/ai-plan` middleware when `AI_PROVIDER=gemini` and `GEMINI_API_KEY` are configured. The API returns workflow JSON only; node execution remains gated by the existing safe runner whitelist.
+
 ## 1A. Eligibility Verdict Against Mandatory Criteria
 
 Current verdict: **Valid Green candidate for the trimmed checkpoint MVP.**
@@ -46,6 +48,7 @@ The project now proves local RPC connectivity, project connection, frontend buil
 | POT can be shown as gas / fee | Pass with caveat | `payment_queryInfo` returns `partialFee` and the project formats it as POT using official Portaldot docs decimal `14`. Local `system_properties` is empty, so the POT label is documented default rather than chain-exposed metadata. |
 | MVP completes one smallest end-to-end core flow | Pass | The selected MVP flow is now balance -> fee estimate -> transfer -> event/result. |
 | Demo can be clearly explained and shown on Demo Day | Pass | The demo is a 60-90 sec flow: refresh health, run balance, run Transfer POT, show fee/extrinsic/events. |
+| AI-assisted workflow generation | Pass as helper | `/api/ai-plan` can use Gemini/OpenRouter/OpenAI to generate validated workflow JSON and falls back to the local planner if no API key is configured. |
 
 Submission classification with current evidence: **Green candidate**, as long as the team clearly labels the contract Membership deploy as extended/unstable and uses Transfer POT as the checkpoint-critical onchain flow.
 
