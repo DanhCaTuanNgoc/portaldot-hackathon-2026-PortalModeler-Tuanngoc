@@ -5,6 +5,8 @@ front-end/dist/
 .cargo-install-target/
 .cargo-temp/
 .local-node/
+*.log
+*.pid
 *.contract
 *.wasm
 *.json
@@ -12,6 +14,7 @@ front-end/dist/
 !scripts/*.json
 !front-end/package.json
 !front-end/package-lock.json
+!front-end/tsconfig*.json
 !.gitignore
 __pycache__/
 .env
