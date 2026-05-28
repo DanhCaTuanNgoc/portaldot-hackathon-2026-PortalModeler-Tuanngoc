@@ -545,3 +545,111 @@ The best near-term version is:
 > A visual Membership workflow builder for Portaldot local development, with draggable nodes, generated commands, runnable steps, and explainable state/event output.
 
 This scope is focused enough to finish, visual enough to stand out, and technical enough to prove real value.
+
+## 16. Competitor Analysis: PortalHouse / Investorquab
+
+Reviewed repository:
+
+- `https://github.com/Investorquab/portaldot-hackathon-2026-portalhouse-investorquab`
+- Local clone tested on 2026-05-27.
+
+### Competitor Positioning
+
+PortalHouse positions itself as a broad Portaldot cockpit: chain health, transactions, token studio, contract deploy, bounty board, AI assistant, and profile.
+
+Its strongest judging advantage is breadth. A judge can click several pages and quickly understand "this is a full dashboard for Portaldot." It also has a public Vercel demo and a simple README testing guide.
+
+### Competitor Strengths
+
+- Clear, broad product story: one dashboard for many Portaldot pallets.
+- Public demo link is prominent in README.
+- Good hackathon packaging: modules table, judge guide, AI testing instructions, wallet address, verified activity claims.
+- React app builds successfully after `npm ci`.
+- Chain connection uses `@polkadot/api` directly and includes local/public RPC switching.
+- Token Studio and Profile are concrete user-facing flows that feel familiar.
+- AI Assistant is a strong demo hook because it can parse natural language into transaction intent.
+
+### Competitor Weaknesses
+
+- Many claims are broader than the implementation depth.
+- Contract templates are simulated unless the user uploads a custom WASM.
+- Bounty board stores most app state in `localStorage`; winner selection does not complete a real payout.
+- Several source files contain encoding artifacts in UI text.
+- `npm run lint` fails heavily in the clone with 285 errors and 6 warnings.
+- Bundle warning: main built chunk is about 1.19 MB minified.
+- `npm audit --audit-level=moderate` reports 3 moderate vulnerabilities.
+- No TypeScript compile gate, no tests, no visible CI.
+- The app is primarily a dashboard; it does not offer a novel developer workflow model.
+
+### PortalModeler Advantages
+
+- Stronger technical depth: real local scripts, fee estimation, structured receipts, contract workflow, generator, and safe runner middleware.
+- Better differentiation: visual executable workflow modeler, not another chain dashboard.
+- Safer execution story: node kinds are whitelisted and mapped to explicit commands.
+- Stronger reproducibility: generated commands, exportable flow artifacts, docs/checklists, and local evidence.
+- Current frontend build passes with `tsc && vite build`.
+- The project can demonstrate one complete proof instead of many shallow modules.
+
+### PortalModeler Gaps Versus PortalHouse
+
+- PortalHouse has a public demo link; PortalModeler should have one or a very clear local judge path.
+- PortalHouse has multi-page breadth; PortalModeler must make its focused workflow feel obviously more valuable.
+- PortalHouse has a familiar wallet/dashboard UX; PortalModeler should make the first-run flow clearer for non-technical judges.
+- PortalHouse README has a judge-specific testing guide near the top; PortalModeler has strong docs, but the judge path can be made more aggressive.
+- PortalHouse AI story is immediately understandable; PortalModeler AI Flow Builder should be demoed as "AI generates a safe executable graph."
+
+## 17. Win-Rate Plan
+
+### Highest Impact Before Submission
+
+1. Add a short `FOR_JUDGES.md` or move a judge quick path near the top of README.
+2. Record a 2-3 minute demo video that shows one complete proof:
+   - Start local node.
+   - Open PortalModeler.
+   - AI or template creates the Membership workflow.
+   - Run health/balance/fee preview.
+   - Run transfer or contract call.
+   - Show receipt, events, state, and exported command sheet.
+3. Make the first screen unmistakably product-led:
+   - The board is the hero.
+   - Preloaded Membership workflow is visible immediately.
+   - "Run safe local proof" is one obvious action.
+4. Add a "Compared to a dashboard" line in README:
+   - Dashboard apps show chain data.
+   - PortalModeler turns a workflow graph into commands, runs, receipts, and documentation.
+5. Add evidence screenshots or GIFs:
+   - Fee estimate.
+   - Successful extrinsic receipt.
+   - Event/state panel.
+   - Exported Markdown/JSON.
+
+### Product Moves That Beat PortalHouse Directly
+
+- Add a "Judge Demo" template button that loads the full proof graph.
+- Add a visible evidence panel with:
+  - endpoint,
+  - signer,
+  - estimated fee,
+  - extrinsic hash,
+  - block hash,
+  - decoded events.
+- Add "Export judge report" as a one-click artifact.
+- Add "AI generated this graph, but state-changing nodes require manual confirmation" messaging.
+- Add a compact public demo mode that works without a local node by showing a saved proof transcript, while clearly labeling it as replay/demo evidence.
+
+### Demo Narrative
+
+Use this framing:
+
+> PortalHouse-style dashboards help users click pallets. PortalModeler helps builders design, execute, verify, and document a full Portaldot workflow. The graph is not decoration; it is the source of commands, validation, execution, evidence, and export.
+
+The winning story should be depth over breadth:
+
+- Fewer pallets.
+- More proof.
+- More reproducibility.
+- More developer value.
+
+### Risk To Avoid
+
+Do not chase PortalHouse's breadth at the last minute. Adding token studio, bounty board, profile, or generic explorer pages would dilute the differentiator. The safest winning angle is to make the visual workflow proof impossible to miss and easy for judges to run.

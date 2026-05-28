@@ -250,6 +250,17 @@ type RunNodeOutcome = {
   snapshot?: ChainSnapshot | null;
 };
 
+type EvidenceRecord = {
+  nodeLabel: string;
+  status: NodeStatus;
+  endedAt: string;
+  fee: string;
+  extrinsicHash: string;
+  blockHash: string;
+  events: string[];
+  command: string;
+};
+
 type AiFlowPlanStep = {
   kind: PortalNodeKind;
   config: PortalNodeConfig;
@@ -269,6 +280,14 @@ type AiPlannerResult = {
   warnings?: string[];
   source?: "openai" | "openrouter" | "gemini" | "local";
   model?: string;
+};
+
+type PendingWriteRun = {
+  title: string;
+  nodes: PortalFlowNode[];
+  endpoint: string;
+  commandPreview: string;
+  onConfirm: () => void;
 };
 
 type PortalModel = {
@@ -346,6 +365,12 @@ const browserHelperNodeKinds = new Set<PortalNodeKind>([
   "saveWorkflow",
   "loadWorkflow",
   "generateReport",
+]);
+
+const writeTransactionNodeKinds = new Set<PortalNodeKind>([
+  "transferPot",
+  "deployContract",
+  "callMessage",
 ]);
 
 const templates: Template[] = [
@@ -1505,6 +1530,70 @@ function AiFlowModal({
   );
 }
 
+type WriteActionConfirmModalProps = {
+  pending: PendingWriteRun | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+};
+
+function WriteActionConfirmModal({ pending, onCancel, onConfirm }: WriteActionConfirmModalProps) {
+  if (!pending) {
+    return null;
+  }
+
+  return (
+    <div className="ai-modal-overlay" role="presentation" onMouseDown={onCancel}>
+      <section
+        className="ai-modal write-confirm-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="write-confirm-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="ai-modal__header">
+          <div>
+            <span className="ai-modal__eyebrow">Write action</span>
+            <h2 id="write-confirm-title">{pending.title}</h2>
+          </div>
+          <button className="icon-button ai-modal__close" type="button" aria-label="Cancel write action" onClick={onCancel}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="write-confirm-summary">
+          <div>
+            <span>Endpoint</span>
+            <strong>{pending.endpoint}</strong>
+          </div>
+          <div>
+            <span>Write nodes</span>
+            <strong>{pending.nodes.map((node) => node.data.label).join(", ")}</strong>
+          </div>
+        </div>
+
+        <div className="ai-warnings" role="status">
+          This action may submit a transaction or instantiate/call a contract on the current local chain. Review the command preview before continuing.
+        </div>
+
+        <label className="ai-prompt">
+          <span>Command preview</span>
+          <pre className="write-confirm-command">{pending.commandPreview}</pre>
+        </label>
+
+        <div className="ai-modal__footer">
+          <button className="text-button quiet" type="button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button className="text-button active-mode" type="button" onClick={onConfirm}>
+            <Shield size={16} />
+            Confirm write
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 type LightweightFlowCanvasProps = {
   nodes: PortalFlowNode[];
   edges: Edge[];
@@ -2483,6 +2572,7 @@ function collectNodeOutputs(node: PortalFlowNode, result: ApiRunResult, context:
     outputs.fee = (result.stdout || "").match(/Estimated fee:\s*(.+)/)?.[1] || "";
     outputs.extrinsicHash = (result.stdout || "").match(/Extrinsic:\s*(.+)/)?.[1] || "";
     outputs.blockHash = (result.stdout || "").match(/Block hash:\s*(.+)/)?.[1] || "";
+    outputs.events = parseReceiptEvents(result.stdout || "");
   }
   if (node.data.kind === "buildContract") {
     outputs.metadataPath = "contract/target/ink/membership.json";
@@ -2498,10 +2588,17 @@ function collectNodeOutputs(node: PortalFlowNode, result: ApiRunResult, context:
   if (node.data.kind === "deployContract" || node.data.kind === "attachContract" || node.data.kind === "verifyContractLive") {
     outputs.contractAddress = context.health?.contractAddress || "";
     outputs.contractReachable = Boolean(context.health?.contractReachable);
+    outputs.gasRequired = (result.stdout || "").match(/Dry-run gas_required:\s*(.+)/)?.[1] || "";
+    outputs.storageDeposit = (result.stdout || "").match(/Dry-run storage_deposit:\s*(.+)/)?.[1] || "";
+    outputs.extrinsicHash = (result.stdout || "").match(/Extrinsic:\s*(.+)/)?.[1] || "";
+    outputs.events = parseReceiptEvents(result.stdout || "");
   }
   if (node.data.kind === "callMessage") {
     outputs.message = node.data.config.message || "join";
     outputs.value = node.data.config.value || "0";
+    outputs.gasRequired = (result.stdout || "").match(/Dry-run gas required:\s*(.+)/)?.[1] || "";
+    outputs.extrinsicHash = (result.stdout || "").match(/Extrinsic:\s*(.+)/)?.[1] || "";
+    outputs.events = parseReceiptEvents(result.stdout || "");
   }
   if (node.data.kind === "readMessage") {
     outputs.message = node.data.config.message || "is_member";
@@ -2549,6 +2646,118 @@ function buildStateDiff(current?: ChainSnapshot | null, previous?: ChainSnapshot
   ];
 
   return rows.map(([label, before, after]) => `${label}: ${before} -> ${after}`);
+}
+
+function parseReceiptEvents(stdout: string) {
+  const lines = stdout.split(/\r?\n/);
+  const eventStart = lines.findIndex((line) => line.trim() === "Events:");
+  if (eventStart >= 0) {
+    return lines
+      .slice(eventStart + 1)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("- "))
+      .map((line) => line.slice(2));
+  }
+
+  const contractMatch = stdout.match(/Contract events:\s*(\[[\s\S]*?\])\s*(?:\n[A-Z][^:\n]+:|$)/);
+  if (!contractMatch) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(contractMatch[1]) as unknown[];
+    return parsed.map((event) => JSON.stringify(event));
+  } catch {
+    return contractMatch[1]
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+}
+
+function outputString(outputs: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = outputs[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function evidenceFromNodes(nodes: PortalFlowNode[], endpoint?: string): EvidenceRecord[] {
+  return nodes
+    .map((node) => {
+      const outputs = node.data.outputs || {};
+      const stdout = typeof outputs.stdout === "string" ? outputs.stdout : node.data.lastRun?.stdout || "";
+      const events = [
+        ...parseReceiptEvents(stdout),
+        ...(Array.isArray(outputs.eventTimeline)
+          ? outputs.eventTimeline.map((event) => {
+              if (event && typeof event === "object" && "name" in event) {
+                const typedEvent = event as SnapshotEvent;
+                return `${typedEvent.status}: ${typedEvent.name} - ${typedEvent.detail}`;
+              }
+              return String(event);
+            })
+          : []),
+        ...(Array.isArray(outputs.events) ? outputs.events.map(String) : []),
+      ].filter(Boolean);
+
+      return {
+        nodeLabel: node.data.label,
+        status: node.data.status,
+        endedAt: node.data.lastRun?.endedAt || node.data.lastRun?.startedAt || "",
+        fee: outputString(outputs, ["estimatedFee", "fee"]),
+        extrinsicHash: outputString(outputs, ["extrinsicHash"]),
+        blockHash: outputString(outputs, ["blockHash"]),
+        events: Array.from(new Set(events)).slice(0, 8),
+        command: outputString(outputs, ["command"]) || hydrateCommand(node.data.command, node.data.config, endpoint),
+      };
+    })
+    .filter((record) => record.fee || record.extrinsicHash || record.blockHash || record.events.length > 0);
+}
+
+function renderEvidenceReport(records: EvidenceRecord[], snapshot: ChainSnapshot | null, endpoint?: string) {
+  const evidenceRows = records.length
+    ? records
+        .map((record, index) => {
+          const events = record.events.length ? record.events.map((event) => `  - ${event}`).join("\n") : "  - none captured";
+          return [
+            `### ${index + 1}. ${record.nodeLabel}`,
+            `- Status: ${record.status}`,
+            `- Finished: ${record.endedAt || "not recorded"}`,
+            `- Command: \`${record.command}\``,
+            `- Fee estimate: ${record.fee || "not captured"}`,
+            `- Extrinsic hash: ${record.extrinsicHash || "not captured"}`,
+            `- Block hash: ${record.blockHash || "not captured"}`,
+            "- Events:",
+            events,
+          ].join("\n");
+        })
+        .join("\n\n")
+    : "No fee, extrinsic, block, or event evidence has been captured yet.";
+
+  return [
+    "# PortalModeler Evidence Report",
+    "",
+    `Generated: ${new Date().toISOString()}`,
+    `Endpoint: ${endpoint || "ws://127.0.0.1:9944"}`,
+    "",
+    "## Snapshot",
+    "",
+    `- Account: ${snapshot?.account.account || "unknown"}`,
+    `- Balance: ${snapshot?.account.freeBalance || "not loaded"}`,
+    `- Contract: ${snapshot?.contract.address || "not deployed"}`,
+    `- Contract reachable: ${snapshot ? String(snapshot.contract.reachable) : "unknown"}`,
+    `- is_member: ${snapshot?.state.isMember === undefined || snapshot?.state.isMember === null ? "unknown" : String(snapshot.state.isMember)}`,
+    `- joined_at: ${snapshot?.state.joinedAt || "not joined"}`,
+    "",
+    "## Evidence",
+    "",
+    evidenceRows,
+    "",
+  ].join("\n");
 }
 
 function decodeLatestRunError(nodes: PortalFlowNode[]) {
@@ -3037,6 +3246,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
   const [aiRunConfirm, setAiRunConfirm] = useState(false);
   const [aiReplaceBoard, setAiReplaceBoard] = useState(false);
   const [runAfterAiApply, setRunAfterAiApply] = useState(false);
+  const [pendingWriteRun, setPendingWriteRun] = useState<PendingWriteRun | null>(null);
   const [importMode, setImportMode] = useState<"replace" | "merge">("replace");
   const importFlowInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -3063,6 +3273,9 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       .map((node) => hydrateCommand(node.data.command, node.data.config, endpoint));
   }, [endpoint, orderedNodes]);
 
+  const evidenceRecords = useMemo(() => evidenceFromNodes(orderedNodes, endpoint), [endpoint, orderedNodes]);
+  const evidenceReport = useMemo(() => renderEvidenceReport(evidenceRecords, snapshot, endpoint), [endpoint, evidenceRecords, snapshot]);
+
   const markdownExport = useMemo(() => {
     const steps = orderedNodes
       .map((node, index) => `${index + 1}. ${node.data.label}: \`${hydrateCommand(node.data.command, node.data.config, endpoint)}\``)
@@ -3084,8 +3297,8 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       })
       .filter(Boolean)
       .join("\n");
-    return `# PortalModeler Membership Flow\n\n## Commands\n\n${steps}\n\n## Evidence\n\n${evidence || "No run evidence captured yet."}\n`;
-  }, [endpoint, orderedNodes]);
+    return `# PortalModeler Membership Flow\n\n## Commands\n\n${steps}\n\n## Evidence Summary\n\n${evidence || "No run evidence captured yet."}\n\n## Evidence Report\n\n${evidenceReport}\n`;
+  }, [endpoint, evidenceReport, orderedNodes]);
 
   const graphExport = useMemo(() => {
     return JSON.stringify(
@@ -3510,6 +3723,39 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     setAiRunConfirm(false);
   }
 
+  function closeWriteConfirmModal() {
+    setPendingWriteRun(null);
+  }
+
+  function confirmPendingWriteRun() {
+    const pending = pendingWriteRun;
+    setPendingWriteRun(null);
+    pending?.onConfirm();
+  }
+
+  function writeNodesFromBatch(batch: PortalFlowNode[]) {
+    return batch.filter((node) => writeTransactionNodeKinds.has(node.data.kind));
+  }
+
+  function confirmWriteRun(title: string, batch: PortalFlowNode[], onConfirm: () => void) {
+    const writeNodes = writeNodesFromBatch(batch);
+
+    if (writeNodes.length === 0) {
+      onConfirm();
+      return;
+    }
+
+    setPendingWriteRun({
+      title,
+      nodes: writeNodes,
+      endpoint: endpoint || "ws://127.0.0.1:9944",
+      commandPreview: writeNodes
+        .map((node) => `${node.data.label}: ${hydrateCommand(node.data.command, node.data.config, endpoint)}`)
+        .join("\n"),
+      onConfirm,
+    });
+  }
+
   function updateAiPrompt(value: string) {
     setAiPrompt(value);
     setAiPlannerResult(null);
@@ -3772,7 +4018,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     }
   }
 
-  async function runSelectedNode() {
+  async function runSelectedNodeConfirmed() {
     if (!selectedNode) {
       pushLog({
         level: "warning",
@@ -3782,6 +4028,17 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
       return;
     }
     await runNode(selectedNode);
+  }
+
+  function runSelectedNode() {
+    if (!selectedNode) {
+      void runSelectedNodeConfirmed();
+      return;
+    }
+
+    confirmWriteRun("Confirm selected node", [selectedNode], () => {
+      void runSelectedNodeConfirmed();
+    });
   }
 
   function updateRunContext(context: WorkflowContext, node: PortalFlowNode, outcome: RunNodeOutcome) {
@@ -3804,7 +4061,7 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     };
   }
 
-  async function runFromSelectedNode() {
+  async function runFromSelectedNodeConfirmed() {
     if (!selectedNode) {
       pushLog({
         level: "warning",
@@ -3842,7 +4099,22 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     }
   }
 
-  async function runFlow() {
+  function runFromSelectedNode() {
+    if (!selectedNode) {
+      void runFromSelectedNodeConfirmed();
+      return;
+    }
+
+    const graphOrderedNodes = workflowSequenceFromGraph(nodes, edges);
+    const selectedIndex = graphOrderedNodes.findIndex((node) => node.id === selectedNode.id);
+    const batch = graphOrderedNodes.slice(Math.max(selectedIndex, 0));
+
+    confirmWriteRun("Confirm run from selected node", batch, () => {
+      void runFromSelectedNodeConfirmed();
+    });
+  }
+
+  async function runFlowConfirmed() {
     const graphOrderedNodes = workflowSequenceFromGraph(nodes, edges);
     const completedNodeIds = new Set<string>();
     let context: WorkflowContext = { nodes, edges, health, snapshot, endpoint };
@@ -3868,8 +4140,21 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
     }
   }
 
+  function runFlow() {
+    const graphOrderedNodes = workflowSequenceFromGraph(nodes, edges);
+    confirmWriteRun("Confirm full flow", graphOrderedNodes, () => {
+      void runFlowConfirmed();
+    });
+  }
+
   useEffect(() => {
     function handleBoardHotkeys(event: KeyboardEvent) {
+      if (event.key === "Escape" && pendingWriteRun) {
+        event.preventDefault();
+        closeWriteConfirmModal();
+        return;
+      }
+
       if (event.key === "Escape" && aiModalOpen) {
         event.preventDefault();
         closeAiModal();
@@ -3951,6 +4236,12 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
         onApplyAndRun={() => applyAiPlan(true)}
         onConfirmRunChange={setAiRunConfirm}
         onReplaceBoardChange={setAiReplaceBoard}
+      />
+
+      <WriteActionConfirmModal
+        pending={pendingWriteRun}
+        onCancel={closeWriteConfirmModal}
+        onConfirm={confirmPendingWriteRun}
       />
 
       <section className="workflow-strip" aria-label="Membership workflow readiness">
@@ -4228,6 +4519,57 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
         </div>
       </section>
 
+      <section className="evidence-panel" aria-label="On-chain evidence panel">
+        <div className="evidence-panel__header">
+          <div className="panel-heading">
+            <Shield size={18} />
+            <span>Proof Evidence</span>
+          </div>
+          <div className="evidence-panel__actions">
+            <button className="text-button quiet" title="Copy evidence report" onClick={() => copyTextArtifact("Evidence report", evidenceReport)}>
+              <Copy size={16} />
+              Copy report
+            </button>
+            <button className="text-button quiet" title="Download evidence report as Markdown" onClick={() => downloadArtifact("Evidence report", "portalmodeler-evidence-report.md", evidenceReport, "text/markdown")}>
+              <Download size={16} />
+              Report.md
+            </button>
+          </div>
+        </div>
+        {evidenceRecords.length > 0 ? (
+          <div className="evidence-grid">
+            {evidenceRecords.map((record) => (
+              <article key={`${record.nodeLabel}-${record.endedAt || record.command}`} className={`evidence-card ${record.status}`}>
+                <div className="evidence-card__top">
+                  <span>{record.status}</span>
+                  <strong>{record.nodeLabel}</strong>
+                </div>
+                <dl className="evidence-list">
+                  <dt>Fee estimate</dt>
+                  <dd>{record.fee || "not captured"}</dd>
+                  <dt>Extrinsic</dt>
+                  <dd>{record.extrinsicHash || "not captured"}</dd>
+                  <dt>Block hash</dt>
+                  <dd>{record.blockHash || "not captured"}</dd>
+                </dl>
+                <div className="evidence-events">
+                  <span>Events</span>
+                  {record.events.length > 0 ? (
+                    record.events.map((event) => <p key={event}>{event}</p>)
+                  ) : (
+                    <p>none captured</p>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="evidence-empty">
+            Run Transaction Preview, Transfer POT, Deploy Contract, or Call Message to capture fee, extrinsic, block, and event proof.
+          </div>
+        )}
+      </section>
+
       <section className="snapshot-panel" aria-label="State and event visualization">
         <article className="snapshot-card account-card">
           <div className="panel-heading">
@@ -4309,7 +4651,6 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
             <Download size={18} />
             <div>
               <span>One-click artifacts</span>
-              <strong>Export or restore the current visual workflow</strong>
             </div>
           </div>
           <div className="export-toolbar__actions">
@@ -4320,6 +4661,10 @@ function WorkbenchPage({ onOpenHome }: { onOpenHome: () => void }) {
             <button className="text-button quiet" title="Download workflow commands as Markdown" onClick={() => downloadArtifact("Commands", "portalmodeler-commands.md", markdownExport, "text/markdown")}>
               <Download size={16} />
               Commands.md
+            </button>
+            <button className="text-button quiet" title="Download on-chain evidence report" onClick={() => downloadArtifact("Evidence report", "portalmodeler-evidence-report.md", evidenceReport, "text/markdown")}>
+              <Shield size={16} />
+              Evidence.md
             </button>
             <button className="text-button quiet" title="Download draggable graph JSON" onClick={() => downloadArtifact("Flow JSON", "portalmodeler-flow.json", graphExport, "application/json")}>
               <GitBranch size={16} />

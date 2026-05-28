@@ -1,65 +1,103 @@
-Mình đã rà lại dự án và chốt flow nên demo là:
+# PortalModeler Demo Flow
 
-**Flow được chọn: “POT Transfer Proof”**
+Recommended demo: **POT Transfer Proof**
 
-Đừng demo Membership contract làm core flow lúc này. Nó ấn tượng về ý tưởng, nhưng hiện đang có rủi ro runtime/deploy. Flow mạnh nhất để đạt Green là flow nhỏ, thật, có log onchain rõ:
+Do not use the Membership contract deploy as the core demo right now. The contract workflow is useful as an extended direction, but the current stable proof is smaller and stronger:
 
 ```txt
 Open PortalModeler Workbench
--> connect local Portaldot node ws://127.0.0.1:9944
+-> connect to local Portaldot node at ws://127.0.0.1:9944
 -> query Alice balance as POT
--> estimate fee bằng payment_queryInfo
--> submit real Balances.transfer_keep_alive
--> show POT amount + fee + extrinsic hash + block hash
--> show events: Balances.Transfer + System.ExtrinsicSuccess
+-> estimate fee with payment_queryInfo
+-> submit a real Balances.transfer_keep_alive transaction
+-> show POT amount, estimated fee, extrinsic hash, block hash
+-> show Balances.Transfer and System.ExtrinsicSuccess events
 ```
 
-Mình vừa verify lại trực tiếp:
+## 60-90 Second Narrative
 
 ```txt
-Free balance: 11528.209802 POT
+PortalModeler is a visual execution workbench for Portaldot builders.
+
+For this demo I am using the smallest reliable onchain proof: a local POT transfer.
+
+First, the workbench checks that the local Portaldot RPC is reachable at ws://127.0.0.1:9944. Then I run Check Balance, which reads Alice's account state from System.Account. Next I run Transfer POT. Before submitting anything, the script estimates the transaction fee through payment_queryInfo, so the builder can see the expected POT cost.
+
+When I confirm the write action, the browser does not execute arbitrary shell commands. It sends an approved node kind to the local safe runner, and the runner maps that node to a whitelisted Python script.
+
+The transaction is included on the local chain. The workbench brings back the important evidence: amount, estimated fee, extrinsic hash, block hash, and events such as Balances.Transfer and System.ExtrinsicSuccess.
+
+The key point is that this is not a static mockup. One visual node triggers a real local Portaldot transaction and returns reproducible evidence for the builder.
+```
+
+## Operator Script
+
+1. Start the local node:
+
+```powershell
+portaldot_dev --dev --tmp --alice
+```
+
+2. Start the workbench:
+
+```powershell
+cd front-end
+npm run dev
+```
+
+3. Open the Vite URL, usually:
+
+```txt
+http://127.0.0.1:5173
+```
+
+4. Show the workbench status strip:
+
+```txt
+RPC endpoint: online
+Endpoint: ws://127.0.0.1:9944
+```
+
+5. Run `Check Balance`.
+
+6. Run `Transfer POT`.
+
+7. Confirm the write-action modal.
+
+8. Zoom into Run Logs and Proof Evidence:
+
+```txt
 Amount: 0.010000 POT
-Estimated fee: 270227051 base units (0.000003 POT)
+Estimated fee: <fee> POT
 Success: True
-Extrinsic: 0x2fe080a4ad253208c0f209aa0f2e39c82cb60b8d5ebe2fbd02b40144c6aaea67
-Block hash: 0x0b891330c9860b45a368b54bbf4cf3021066eb3e90bf527492b6e682742c1447
+Extrinsic: <extrinsic hash>
+Block hash: <block hash>
 Events:
 - Balances.Transfer
 - TransactionPayment.TransactionFeePaid
 - System.ExtrinsicSuccess
 ```
 
-Code path có thể trích trong submission:
+## What Is Real
 
-- Transfer thật + fee estimate: [scripts/transfer.py](D:/Coding/PortalPot-Hackathon/portaldot-proof/scripts/transfer.py:43)
-- Balance query: [scripts/query.py](D:/Coding/PortalPot-Hackathon/portaldot-proof/scripts/query.py:20)
-- Frontend safe runner mapping `transferPot`: [vite.config.ts](D:/Coding/PortalPot-Hackathon/portaldot-proof/front-end/vite.config.ts:137)
-- UI node `Transfer POT`: [App.tsx](D:/Coding/PortalPot-Hackathon/portaldot-proof/front-end/src/App.tsx:301)
+- Local Portaldot RPC connection.
+- Account balance query through `System.Account`.
+- Fee estimate through `payment_queryInfo`.
+- Included `Balances.transfer_keep_alive` extrinsic.
+- Extrinsic hash, block hash, and chain events returned from the local node.
+- Browser-to-runner execution through an approved node whitelist.
 
-**Demo 60-90 giây nên quay như sau**
+## What Is Local Helper UI
 
-1. Start local node: `portaldot_dev --dev --tmp --alice`
-2. Open Workbench.
-3. Show endpoint `ws://127.0.0.1:9944`.
-4. Run `Check Balance`.
-5. Run `Transfer POT`.
-6. Zoom vào Run Logs: amount, estimated fee, extrinsic hash, block hash, events.
-7. Kết câu: “This is not a static screenshot. The workbench executed a real local Portaldot transaction through a whitelisted runner.”
+- Visual canvas layout.
+- Command sheet export.
+- Markdown evidence report.
+- Flow JSON and PortalModel JSON export.
+- Generated ink! skeleton.
+- Event helper views.
 
-**Mock phải label rõ**
-
-Ghi thẳng trong demo/submission:
+## One-Line Pitch
 
 ```txt
-Mocked/local helper:
-Export workflow, command sheet, generated report, event helper views are local UI helpers.
-
-Real onchain core:
-Balance query, payment_queryInfo fee estimate, Balances.transfer_keep_alive transaction, extrinsic/block hash, and success events.
+PortalModeler turns a visual workflow node into a real Portaldot action: the builder runs Transfer POT, the system estimates the fee, submits the transaction locally, then returns the extrinsic hash, block hash, and chain events inside the workbench.
 ```
-
-**Một câu pitch nên dùng**
-
-“PortalModeler turns a visual workflow node into a real Portaldot action: the user runs one Transfer POT node, the system estimates POT fee, submits the transaction locally, then returns the extrinsic hash, block hash, and chain events inside the workbench.”
-
-Frontend build cũng pass: `npm run build` thành công. Flow này đủ Rule 1, đúng Rule 2, và tránh bị trừ Rule 3 vì core không dựa vào mock.
