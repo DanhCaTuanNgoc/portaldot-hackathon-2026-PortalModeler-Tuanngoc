@@ -571,6 +571,8 @@ async function requestOpenAiPlan(prompt: string, endpoint: string, availableKind
             "You are PortalModeler AI Flow Builder.",
             "Return only a JSON workflow that matches the supplied schema.",
             "Use only supported node kinds and string config values.",
+            "Use each node kind at most once because the workbench uses node kind as the generated node id.",
+            "For transfers, use one checkAccount step for the signer only; put the recipient address in transferPot.recipient instead of adding a second checkAccount step.",
             "Prefer local-safe, inspectable flows: connectRpc, checkAccount, checkBalance, transactionPreview, exploreMetadata, dryRunCall, stateDiff, decodeError.",
             "For state-changing actions such as transferPot, deployContract, and callMessage, include preview or dry-run steps before the action and set autoRun to false.",
             "Never invent shell commands. The app runner maps node kinds to whitelisted commands.",
@@ -643,6 +645,8 @@ async function requestOpenRouterPlan(prompt: string, endpoint: string, available
             "You are PortalModeler AI Flow Builder.",
             "Return only JSON matching the supplied schema.",
             "Use only supported node kinds and string config values.",
+            "Use each node kind at most once because the workbench uses node kind as the generated node id.",
+            "For transfers, use one checkAccount step for the signer only; put the recipient address in transferPot.recipient instead of adding a second checkAccount step.",
             "Prefer local-safe, inspectable flows: connectRpc, checkAccount, checkBalance, transactionPreview, exploreMetadata, dryRunCall, stateDiff, decodeError.",
             "For state-changing actions such as transferPot, deployContract, and callMessage, include preview or dry-run steps before the action and set autoRun to false.",
             "Never invent shell commands. The app runner maps node kinds to whitelisted commands.",
@@ -708,6 +712,8 @@ async function requestGeminiPlan(prompt: string, endpoint: string, availableKind
                 "You are PortalModeler AI Flow Builder.",
                 "Return only JSON matching the supplied schema.",
                 "Use only supported node kinds and string config values.",
+                "Use each node kind at most once because the workbench uses node kind as the generated node id.",
+                "For transfers, use one checkAccount step for the signer only; put the recipient address in transferPot.recipient instead of adding a second checkAccount step.",
                 "Prefer local-safe, inspectable flows: connectRpc, checkAccount, checkBalance, transactionPreview, exploreMetadata, dryRunCall, stateDiff, decodeError.",
                 "For state-changing actions such as transferPot, deployContract, and callMessage, include preview or dry-run steps before the action and set autoRun to false.",
                 "Never invent shell commands. The app runner maps node kinds to whitelisted commands.",
@@ -798,7 +804,7 @@ function commandForNode(kind: string, config: Record<string, string | undefined>
   const message = config.message || config.action || "is_member";
   const recipient = config.account || config.recipient || "";
 
-  if (kind === "connectRpc" || kind === "checkRuntime") return { command: "python", args: ["scripts/doctor.py", "--url", endpoint] };
+  if (kind === "checkRuntime") return { command: "python", args: ["scripts/doctor.py", "--url", endpoint] };
   if (kind === "checkBalance") return { command: "python", args: ["scripts/query.py", "--url", endpoint] };
   if (kind === "transactionPreview") {
     if ((config.target || "transferPot") === "callMessage") {
@@ -923,6 +929,18 @@ export default defineConfig(({ mode }) => {
 
             if (kind === "checkAccount") {
               sendJson(response, 200, { ok: true, command: "PORTALDOT_SEED=//Alice", stdout: `Signer seed: ${config.seed || "//Alice"}\n`, stderr: "" });
+              return;
+            }
+
+            if (kind === "connectRpc") {
+              const endpoint = config.endpoint || "ws://127.0.0.1:9944";
+              const reachable = await checkTcp(endpoint);
+              sendJson(response, 200, {
+                ok: reachable,
+                command: `rpc ping ${endpoint}`,
+                stdout: `RPC ${endpoint}: ${reachable ? "online" : "offline"}\n`,
+                stderr: reachable ? "" : "RPC endpoint is not reachable.\n",
+              });
               return;
             }
 

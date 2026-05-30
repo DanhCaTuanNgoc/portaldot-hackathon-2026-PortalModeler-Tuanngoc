@@ -2063,8 +2063,9 @@ h1 {
 }
 
 .export-toolbar__title {
+  flex: 0 0 150px;
   gap: 10px;
-  min-width: 270px;
+  min-width: 0;
 }
 
 .export-toolbar__title svg {
@@ -2088,14 +2089,17 @@ h1 {
 }
 
 .export-toolbar__actions {
+  flex: 1 1 auto;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
 }
 
 .export-toolbar__actions .text-button {
   min-height: 34px;
   padding: 0 10px;
+  white-space: nowrap;
 }
 
 .visually-hidden {
@@ -2108,9 +2112,17 @@ h1 {
   white-space: nowrap;
 }
 
+.proof-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(330px, 380px);
+  align-items: stretch;
+  gap: 14px;
+}
+
 .evidence-panel {
   display: grid;
   gap: 12px;
+  align-content: start;
   border: 1px solid rgba(57, 215, 152, 0.22);
   border-radius: 8px;
   background:
@@ -2130,6 +2142,7 @@ h1 {
 }
 
 .evidence-panel__header {
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
@@ -2152,6 +2165,14 @@ h1 {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.proof-row .evidence-grid {
+  grid-template-columns: 1fr;
+}
+
+.proof-row .evidence-panel__actions {
+  justify-content: flex-start;
 }
 
 .evidence-card,
@@ -2559,7 +2580,7 @@ h1 {
 
 .terminal-panel {
   display: flex;
-  min-height: 520px;
+  min-height: 560px;
   flex-direction: column;
   overflow: hidden;
   padding: 0;
@@ -3085,6 +3106,7 @@ h1 {
     min-height: 620px;
   }
 
+  .proof-row,
   .bottom-panel,
   .snapshot-panel,
   .evidence-grid {
